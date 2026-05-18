@@ -24,6 +24,14 @@ def test_runtime_adapter_interface_and_legacy_journal_methods_exist():
     assert runtime.runtime_adapter_mode({"HERMES_WEBUI_RUNTIME_ADAPTER": "sidecar"}) == "legacy-direct"
 
 
+def test_queue_goal_adapter_methods_remain_docs_only_until_slice3c_implementation():
+    runtime = importlib.import_module("api.runtime_adapter")
+
+    for name in ("queue_message", "queue_input", "update_goal"):
+        assert not hasattr(runtime.RuntimeAdapter, name)
+        assert not hasattr(runtime.LegacyJournalRuntimeAdapter, name)
+
+
 def test_legacy_journal_adapter_start_run_delegates_without_owning_runtime_state():
     runtime = importlib.import_module("api.runtime_adapter")
     calls = []
