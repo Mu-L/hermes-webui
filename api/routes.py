@@ -4206,6 +4206,9 @@ def handle_get(handler, parsed) -> bool:
     if parsed.path == "/api/file/raw":
         return _handle_file_raw(handler, parsed)
 
+    if parsed.path == "/api/folder/download":
+        return _handle_folder_download(handler, parsed)
+
     if parsed.path == "/api/file":
         return _handle_file_read(handler, parsed)
 
@@ -6684,6 +6687,146 @@ def _file_raw_target(session, sid: str, rel: str) -> Path | None:
     if attachment_target.exists() and attachment_target.is_file():
         return attachment_target
     return None
+
+
+# ─── /api/folder/download ───────────────────────────────────────────────────
+# Configurable caps. Match the HERMES_WEBUI_MAX_UPLOAD_MB style used elsewhere
+# (api/config.py) so operators have one consistent env-var convention.
+# Bound on per-request wall-clock and bandwidth, not RSS. The zip streams
+# straight into handler.wfile, so peak memory is the per-file read buffer
+# inside zipfile, not the cap value.
+def _folder_zip_max_bytes() -> int:
+    try:
+        mb = int(os.getenv("HERMES_WEBUI_FOLDER_ZIP_MAX_MB", "1024"))
+    except ValueError:
+        mb = 1024
+    return max(1, mb) * 1024 * 1024
+
+
+def _folder_zip_max_files() -> int:
+    try:
+        return max(1, int(os.getenv("HERMES_WEBUI_FOLDER_ZIP_MAX_FILES", "50000")))
+    except ValueError:
+        return 50000
+
+
+def _folder_download_collect(target: Path, workspace_root: Path,
+                              max_bytes: int, max_files: int):
+    """Walk target dir; return (files, total_bytes, hit_limit_reason_or_None).
+
+    files is a list of (filesystem_path, archive_name) tuples ready for
+    ZipFile.write. Symlinks escaping the workspace are skipped.
+    """
+    import os as _os
+    files = []
+    total_bytes = 0
+    for root, dirs, names in _os.walk(target, followlinks=False):
+        root_path = Path(root)
+        try:
+            if not root_path.resolve().is_relative_to(workspace_root):
+                dirs[:] = []
+                continue
+        except (ValueError, OSError):
+            dirs[:] = []
+            continue
+        for name in names:
+            fp = root_path / name
+            if fp.is_symlink():
+                try:
+                    if not fp.resolve().is_relative_to(workspace_root):
+                        continue
+                except (ValueError, OSError):
+                    continue
+            try:
+                size = fp.stat().st_size
+            except OSError:
+                continue
+            if len(files) >= max_files:
+                return files, total_bytes, "max_files"
+            if total_bytes + size > max_bytes:
+                return files, total_bytes, "max_bytes"
+            try:
+                arcname = fp.relative_to(target)
+            except ValueError:
+                continue
+            files.append((fp, str(arcname)))
+            total_bytes += size
+    return files, total_bytes, None
+
+
+def _handle_folder_download(handler, parsed):
+    """GET /api/folder/download?session_id=...&path=...
+
+    Streams a zip of <session.workspace>/<path>. Symlinks escaping the
+    workspace are skipped. Empty folders return an empty (valid) zip.
+    Respects HERMES_WEBUI_FOLDER_ZIP_MAX_MB and HERMES_WEBUI_FOLDER_ZIP_MAX_FILES.
+    Pre-flights the walk so size/count failures return a clean 413 with JSON
+    body BEFORE any zip bytes are sent.
+    """
+    import zipfile
+    from urllib.parse import parse_qs
+
+    qs = parse_qs(parsed.query)
+    sid = qs.get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "session_id is required")
+    try:
+        s = get_session(sid)
+    except KeyError:
+        return bad(handler, "Session not found", 404)
+
+    rel = qs.get("path", [""])[0]
+    try:
+        target = safe_resolve(Path(s.workspace), rel)
+    except ValueError:
+        return bad(handler, "invalid path", 400)
+    if not target.exists():
+        return j(handler, {"error": "not found"}, status=404)
+    if not target.is_dir():
+        return bad(handler, "path must be a directory; use /api/file/raw for single files", 400)
+
+    workspace_root = Path(s.workspace).resolve()
+    max_bytes = _folder_zip_max_bytes()
+    max_files = _folder_zip_max_files()
+
+    files, total_bytes, limit_hit = _folder_download_collect(
+        target, workspace_root, max_bytes, max_files
+    )
+    if limit_hit == "max_files":
+        return j(handler, {
+            "error": "too many files",
+            "limit": max_files,
+            "configure": "HERMES_WEBUI_FOLDER_ZIP_MAX_FILES",
+        }, status=413)
+    if limit_hit == "max_bytes":
+        return j(handler, {
+            "error": "folder too large",
+            "limit_bytes": max_bytes,
+            "configure": "HERMES_WEBUI_FOLDER_ZIP_MAX_MB",
+        }, status=413)
+
+    zip_name = (target.name or "workspace") + ".zip"
+    handler.send_response(200)
+    handler.send_header("Content-Type", "application/zip")
+    handler.send_header(
+        "Content-Disposition",
+        _content_disposition_value("attachment", zip_name),
+    )
+    handler.send_header("Cache-Control", "no-store")
+    handler.end_headers()
+
+    written = 0
+    with zipfile.ZipFile(handler.wfile, mode="w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+        for fp, arcname in files:
+            try:
+                zf.write(fp, arcname=arcname)
+                written += 1
+            except (OSError, PermissionError) as e:
+                logger.warning("folder-download: skipping %s: %s", fp, e)
+    logger.info(
+        "folder-download: streamed %d/%d files (~%d bytes) from %s",
+        written, len(files), total_bytes, target,
+    )
 
 
 def _handle_file_raw(handler, parsed):

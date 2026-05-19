@@ -403,6 +403,7 @@ const LOCALES = {
     reveal_in_finder: 'Reveal in File Manager',
     reveal_failed: 'Failed to reveal: ',
     copy_file_path: 'Copy file path',
+    download_folder: 'Download Folder',
     path_copied: 'File path copied to clipboard',
     path_copy_failed: 'Failed to copy path: ',
     session_rename: 'Rename conversation',
@@ -1624,6 +1625,7 @@ const LOCALES = {
     reveal_in_finder: 'Mostra nel File Manager',
     reveal_failed: 'Mostra fallito: ',
     copy_file_path: 'Copia percorso file',
+    download_folder: 'Download Folder', // TODO: translate
     path_copied: 'Percorso file copiato negli appunti',
     path_copy_failed: 'Copia percorso fallita: ',
     session_rename: 'Rinomina conversazione',
@@ -2837,6 +2839,7 @@ const LOCALES = {
     reveal_in_finder: 'ファイルマネージャーで表示',
     reveal_failed: '表示に失敗しました: ',
     copy_file_path: 'ファイルパスをコピー',
+    download_folder: 'Download Folder', // TODO: translate
     path_copied: 'ファイルパスをクリップボードにコピーしました',
     path_copy_failed: 'パスのコピーに失敗しました: ',
     session_rename: '会話の名前を変更',
@@ -3976,6 +3979,7 @@ const LOCALES = {
     reveal_in_finder: 'Показать в файловом менеджере',
     reveal_failed: 'Не удалось открыть: ',
     copy_file_path: 'Копировать путь к файлу',
+    download_folder: 'Download Folder', // TODO: translate
     path_copied: 'Путь к файлу скопирован в буфер обмена',
     path_copy_failed: 'Не удалось скопировать путь: ',
     session_rename: 'Переименовать беседу',
@@ -5108,6 +5112,7 @@ const LOCALES = {
     reveal_in_finder: 'Mostrar en el gestor de archivos',
     reveal_failed: 'Error al mostrar: ',
     copy_file_path: 'Copiar ruta del archivo',
+    download_folder: 'Download Folder', // TODO: translate
     path_copied: 'Ruta del archivo copiada al portapapeles',
     path_copy_failed: 'Error al copiar la ruta: ',
     session_rename: 'Renombrar conversación',
@@ -6243,6 +6248,7 @@ const LOCALES = {
     reveal_in_finder: 'Im Dateimanager anzeigen',
     reveal_failed: 'Anzeige fehlgeschlagen: ',
     copy_file_path: 'Dateipfad kopieren',
+    download_folder: 'Download Folder', // TODO: translate
     path_copied: 'Dateipfad in die Zwischenablage kopiert',
     path_copy_failed: 'Pfad konnte nicht kopiert werden: ',
     session_rename: 'Unterhaltung umbenennen',
@@ -7428,6 +7434,7 @@ const LOCALES = {
     reveal_in_finder: '在文件管理器中显示',
     reveal_failed: '显示失败：',
     copy_file_path: '\u590d\u5236\u6587\u4ef6\u8def\u5f84',
+    download_folder: 'Download Folder', // TODO: translate
     path_copied: '\u6587\u4ef6\u8def\u5f84\u5df2\u590d\u5236\u5230\u526a\u8d34\u677f',
     path_copy_failed: '\u590d\u5236\u8def\u5f84\u5931\u8d25\uff1a',
     session_rename: '\u91cd\u547d\u540d\u5bf9\u8bdd',
@@ -8488,6 +8495,7 @@ const LOCALES = {
     reveal_in_finder: '\u5728\u6a94\u6848\u7ba1\u7406\u54e1\u4e2d\u986f\u793a',
     reveal_failed: '\u986f\u793a\u5931\u6557\uff1a',
     copy_file_path: '\u8907\u88fd\u6a94\u6848\u8def\u5f91',
+    download_folder: 'Download Folder', // TODO: translate
     path_copied: '\u6a94\u6848\u8def\u5f91\u5df2\u8907\u88fd\u5230\u526a\u8cbc\u7c3f',
     path_copy_failed: '\u8907\u88fd\u8def\u5f91\u5931\u6557\uff1a',
     session_rename: '\u91cd\u65b0\u547d\u540d\u5c0d\u8a71',
@@ -9792,6 +9800,7 @@ const LOCALES = {
     reveal_in_finder: 'Mostrar no gerenciador de arquivos',
     reveal_failed: 'Falha ao mostrar: ',
     copy_file_path: 'Copiar caminho do arquivo',
+    download_folder: 'Download Folder', // TODO: translate
     path_copied: 'Caminho do arquivo copiado para a área de transferência',
     path_copy_failed: 'Falha ao copiar caminho: ',
     session_rename: 'Renomear conversa',
@@ -10903,6 +10912,7 @@ const LOCALES = {
     reveal_in_finder: '파일 관리자에서 열기',
     reveal_failed: '표시 실패: ',
     copy_file_path: '파일 경로 복사',
+    download_folder: 'Download Folder', // TODO: translate
     path_copied: '파일 경로가 클립보드에 복사되었습니다',
     path_copy_failed: '경로 복사 실패: ',
     session_rename: '대화 이름 변경',
@@ -12047,6 +12057,7 @@ const LOCALES = {
     reveal_in_finder: 'Révéler dans le gestionnaire de fichiers',
     reveal_failed: 'Échec de la révélation :',
     copy_file_path: 'Copier le chemin du fichier',
+    download_folder: 'Download Folder', // TODO: translate
     path_copied: 'Chemin du fichier copié dans le presse-papiers',
     path_copy_failed: 'Échec de la copie du chemin :',
     session_rename: 'Renommer la conversation',
