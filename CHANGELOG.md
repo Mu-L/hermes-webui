@@ -13,6 +13,9 @@
 - **PR #2824** by @gavinssr — A "Stop server" affordance in Settings → System that gracefully shuts down the local WebUI server. Useful when WebUI was launched via `./ctl.sh start` or the native macOS/Windows app and the user wants to stop it without context-switching to a terminal. Confirmation dialog before the actual shutdown. The `/api/shutdown` route is CSRF-gated and intended for local-loopback use. Originally a title-bar button; relocated to Settings per the project's deep-UX rule (default-hidden for niche destructive actions on always-visible surfaces).
 
 ### Fixed
+
+### Fixed
+- **Reasoning effort chip visibility** — `/api/reasoning` now accepts `model` and `provider` query params and returns `supported_efforts` so the composer chip hides for models without configurable reasoning levels (for example Cursor Composer) while remaining available for models like GPT-5.5.
 - **Cursor ACP routing and new-chat defaults** — New conversations now carry the visible composer picker selection into `POST /api/session/new`, persist model changes before a session exists, and evict cached session agents when the model/provider changes mid-session.
 
 - **PR #2685** by @LumenYoung — Prevent replayed context in chat reconciliation and metering. When a WebUI session is recovered (e.g., after a process restart, network drop, or browser reload), the sidebar/`state.db` reconciliation logic walks the sidecar transcript in order and only skips rows that can actually be aligned with the remaining sidecar context. The prior set-membership check was too broad: a legitimate fresh message that happened to share a key with any older repeated short message in the sidecar was mis-classified as already-seen and dropped from the replay, leading to lost context and inconsistent metering. Also caps the per-turn live-tool-prompt token estimate at 12,000 to prevent unbounded growth on bursts of large tool reads before exact provider accounting overrides.
