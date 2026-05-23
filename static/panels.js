@@ -182,6 +182,24 @@ function _consumeSettingsTargetPanel(fallback = 'chat') {
   return target;
 }
 
+function _resyncChatSidebarAfterPanelSwitch() {
+  if (_currentPanel !== 'chat') return;
+  if (typeof renderSessionListFromCache !== 'function') return;
+  const run = () => {
+    if (_currentPanel !== 'chat') return;
+    if (typeof _renamingSid !== 'undefined' && _renamingSid) return;
+    // If the user opens the per-conversation action menu immediately after
+    // returning to Chat, do not let the deferred sidebar resync tear it down.
+    // renderSessionListFromCache() intentionally closes that menu before it
+    // rebuilds rows, which is correct for normal list refreshes but hostile to
+    // this one-shot panel-transition repair.
+    if (typeof _sessionActionMenu !== 'undefined' && _sessionActionMenu) return;
+    renderSessionListFromCache();
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+  else run();
+}
+
 async function switchPanel(name, opts = {}) {
   const nextPanel = name || 'chat';
   const prevPanel = _currentPanel;
@@ -251,6 +269,7 @@ async function switchPanel(name, opts = {}) {
     if (sidebar) sidebar.classList.add('mobile-open');
     if (overlay) overlay.classList.add('visible');
   }
+  _resyncChatSidebarAfterPanelSwitch();
   syncAppTitlebar();
   return true;
 }
@@ -658,11 +677,14 @@ async function _loadRunContent(jobId, filename, runId){
       body.textContent = data.error;
       return;
     }
+    const expanded = _cronExpansionGet(_cronRunExpandKey(jobId, filename));
+    const output = expanded ? (data.content || data.snippet || '') : (data.snippet || data.content || '');
+    body.classList.toggle('expanded', expanded);
     // Render markdown content using the same renderer as chat messages
     if (typeof renderMd === 'function') {
-      body.innerHTML = renderMd(data.snippet || data.content);
+      body.innerHTML = renderMd(output);
     } else {
-      body.textContent = data.snippet || data.content;
+      body.textContent = output;
     }
     const usageStrip = _formatCronRunUsageStrip(data.usage);
     if (usageStrip) {
@@ -671,13 +693,15 @@ async function _loadRunContent(jobId, filename, runId){
       usage.textContent = usageStrip;
       body.appendChild(usage);
     }
-    // Show "View full output" button if content was truncated
-    if (data.content && data.snippet && data.content.length > data.snippet.length) {
+    // Show "View full output" button only for collapsed previews. Expanded rows render the full body inline.
+    if (!expanded && data.content && data.snippet && data.content.length > data.snippet.length) {
       const btn = document.createElement('button');
       btn.style.cssText = 'margin-top:8px;padding:4px 12px;border-radius:var(--radius-btn);border:1px solid var(--border-subtle);background:var(--surface-subtle);color:var(--text-secondary);cursor:pointer;font-size:12px';
       btn.textContent = t('cron_view_full_output') || 'View full output';
       btn.onclick = () => {
-        body.innerHTML = renderMd ? renderMd(data.content) : '';
+        _cronExpansionSet(_cronRunExpandKey(jobId, filename), true);
+        body.classList.add('expanded');
+        body.innerHTML = renderMd ? renderMd(data.content) : data.content;
         btn.remove();
       };
       body.appendChild(btn);
@@ -3291,9 +3315,23 @@ function renderSkills(skills) {
     sec.appendChild(hdr);
     for (const skill of items.sort((a,b) => a.name.localeCompare(b.name))) {
       const el = document.createElement('div');
-      el.className = 'skill-item';
+      el.className = 'skill-item' + (skill.disabled ? ' disabled' : '');
       el.style.display = collapsed ? 'none' : '';
-      el.innerHTML = `<span class="skill-name">${esc(skill.name)}</span><span class="skill-desc">${esc(skill.description||'')}</span>`;
+      const isDisabled = skill.disabled || false;
+      const toggle = document.createElement('span');
+      toggle.className = 'skill-toggle' + (isDisabled ? '' : ' enabled');
+      toggle.title = isDisabled ? t('skill_disabled') : t('skill_enabled');
+      toggle.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        toggleSkill(skill.name, !isDisabled);
+      });
+      const nameEl = document.createElement('span');
+      nameEl.className = 'skill-name';
+      nameEl.textContent = skill.name;
+      const descEl = document.createElement('span');
+      descEl.className = 'skill-desc';
+      descEl.textContent = skill.description || '';
+      el.append(toggle, nameEl, descEl);
       el.onclick = () => openSkill(skill.name, el);
       sec.appendChild(el);
     }
@@ -3303,6 +3341,28 @@ function renderSkills(skills) {
 
 function filterSkills() {
   if (_skillsData) renderSkills(_skillsData);
+}
+
+
+async function toggleSkill(name, currentlyEnabled) {
+  const newEnabled = !currentlyEnabled;
+  try {
+    const result = await api('/api/skills/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ name, enabled: newEnabled })
+    });
+    if (result && result.ok) {
+      if (_skillsData) {
+        const skill = _skillsData.find(s => s.name === name);
+        if (skill) skill.disabled = !newEnabled;
+      }
+      renderSkills(_skillsData || []);
+    } else {
+      setStatus((result && result.error) || t('skill_toggle_failed'));
+    }
+  } catch(e) {
+    setStatus(t('skill_toggle_failed') + e.message);
+  }
 }
 
 // Currently selected skill detail — kept across panel switches so re-entering
@@ -4508,6 +4568,17 @@ function _refreshProfileSwitchBackground(gen){
     if (gen !== _profileSwitchGeneration) return;
     if (S.session && typeof syncTopbar === 'function') syncTopbar();
   }).catch(()=>{});
+  // Reconcile per-profile sidebar tab visibility. hidden_tabs is a per-profile
+  // appearance setting; without this fetch, Profile A's hidden-tabs choice
+  // would remain in effect under Profile B until the user opens Settings.
+  // Stage-394 follow-up to #2636 deep review.
+  Promise.resolve(api('/api/settings')).then(function(s){
+    if (gen !== _profileSwitchGeneration) return;
+    var hidden = (s && Array.isArray(s.hidden_tabs)) ? s.hidden_tabs : [];
+    hidden = hidden.filter(function(x){ return typeof x === 'string' && x.trim(); });
+    if (typeof _setHiddenTabs === 'function') _setHiddenTabs(hidden);
+    if (typeof _applyTabVisibility === 'function') _applyTabVisibility(hidden);
+  }).catch(function(){});
 }
 
 async function loadProfilesPanel() {
@@ -5113,6 +5184,86 @@ let _settingsAppearanceAutosaveRetryPayload = null;
 let _settingsPreferencesAutosaveTimer = null;
 let _settingsPreferencesAutosaveRetryPayload = null;
 
+// ── Sidebar tab visibility ─────────────────────────────────────────────────
+const _ALWAYS_VISIBLE_TABS = new Set(['chat','settings']);
+const _HIDDEN_TABS_LS_KEY = 'hermes-webui-hidden-tabs';
+
+function _getHiddenTabs(){
+  try{var h=localStorage.getItem(_HIDDEN_TABS_LS_KEY);if(h){var p=JSON.parse(h);if(Array.isArray(p))return p;}}catch(e){}
+  return[];
+}
+
+function _setHiddenTabs(panels){
+  try{localStorage.setItem(_HIDDEN_TABS_LS_KEY,JSON.stringify(panels));}catch(e){}
+}
+
+function _applyTabVisibility(hidden){
+  if(!Array.isArray(hidden)) hidden=[];
+  // Hide/unhide all [data-panel] elements (sidebar-nav buttons + rail buttons)
+  document.querySelectorAll('[data-panel]').forEach(function(el){
+    var panel=el.dataset.panel;
+    if(!panel)return;
+    var shouldHide=hidden.indexOf(panel)!==-1;
+    // Never hide always-visible panels (chat, settings) even if present in hidden_tabs
+    if(_ALWAYS_VISIBLE_TABS.has(panel)) shouldHide=false;
+    el.classList.toggle('nav-tab-hidden',shouldHide);
+  });
+  // If the currently active tab is hidden, switch to chat
+  var activeRail=document.querySelector('.rail .rail-btn.nav-tab.active[data-panel]');
+  var activeSidebar=document.querySelector('.sidebar-nav .nav-tab.active[data-panel]');
+  var activeEl=activeRail||activeSidebar;
+  if(activeEl&&activeEl.classList.contains('nav-tab-hidden')){
+    if(typeof switchPanel==='function') switchPanel('chat');
+  }
+}
+
+function _renderTabVisibilityChips(){
+  var container=$('tabVisibilityChips');
+  if(!container)return;
+  var hidden=_getHiddenTabs();
+  // Scan rail buttons to discover all available panels (skip always-visible + dashboard-link)
+  var tabs=document.querySelectorAll('.rail .rail-btn.nav-tab[data-panel]');
+  container.innerHTML='';
+  tabs.forEach(function(tab){
+    var panel=tab.dataset.panel;
+    if(!panel||_ALWAYS_VISIBLE_TABS.has(panel))return;
+    if(tab.classList.contains('dashboard-link'))return;
+    var label=tab.dataset.tooltip||tab.dataset.label||panel;
+    // Capitalize first letter
+    label=label.charAt(0).toUpperCase()+label.slice(1);
+    var chip=document.createElement('button');
+    chip.type='button';
+    chip.className='tab-visibility-chip';
+    var isOff=hidden.indexOf(panel)!==-1;
+    if(isOff)chip.classList.add('chip-off');
+    chip.textContent=label;
+    chip.setAttribute('data-tab-panel',panel);
+    // Use role="switch" + aria-checked instead of aria-pressed so screen
+    // readers narrate "Tasks switch on/off" (matches user mental model) rather
+    // than "Tasks toggle button pressed/not-pressed" (where the polarity is
+    // confusing because chip-off looks like the "off" state).
+    chip.setAttribute('role','switch');
+    chip.setAttribute('aria-checked',isOff?'false':'true');
+    chip.onclick=function(){_toggleTabVisibilityChip(panel);};
+    container.appendChild(chip);
+  });
+}
+
+function _toggleTabVisibilityChip(panel){
+  if(_ALWAYS_VISIBLE_TABS.has(panel))return;
+  var hidden=_getHiddenTabs();
+  var idx=hidden.indexOf(panel);
+  if(idx!==-1){
+    hidden.splice(idx,1);
+  }else{
+    hidden.push(panel);
+  }
+  _setHiddenTabs(hidden);
+  _applyTabVisibility(hidden);
+  _renderTabVisibilityChips();
+  _scheduleAppearanceAutosave();
+}
+
 function switchSettingsSection(name){
   const section=(name==='appearance'||name==='preferences'||name==='providers'||name==='plugins'||name==='system')?name:'conversation';
   _settingsSection=section;
@@ -5240,6 +5391,7 @@ function _appearancePayloadFromUi(){
     font_size: ($('settingsFontSize')||{}).value || localStorage.getItem('hermes-font-size') || 'default',
     session_jump_buttons: !!($('settingsSessionJumpButtons')||{}).checked,
     session_endless_scroll: !!($('settingsSessionEndlessScroll')||{}).checked,
+    hidden_tabs: _getHiddenTabs(),
   };
 }
 
@@ -5317,6 +5469,8 @@ function _preferencesPayloadFromUi(){
   if(showUsageCb) payload.show_token_usage=showUsageCb.checked;
   const showQuotaChipCb=$('settingsShowQuotaChip');
   if(showQuotaChipCb) payload.show_quota_chip=showQuotaChipCb.checked;
+  const hideSuggestionsCb=$('settingsHideSuggestions');
+  if(hideSuggestionsCb) payload.hide_empty_state_suggestions=hideSuggestionsCb.checked;
   const showTpsCb=$('settingsShowTps');
   if(showTpsCb) payload.show_tps=showTpsCb.checked;
   const fadeTextCb=$('settingsFadeTextEffect');
@@ -5343,6 +5497,8 @@ function _preferencesPayloadFromUi(){
   if(notifCb) payload.notifications_enabled=notifCb.checked;
   const sidebarDensitySel=$('settingsSidebarDensity');
   if(sidebarDensitySel) payload.sidebar_density=sidebarDensitySel.value;
+  const pinnedLimitField=$('settingsPinnedSessionsLimit');
+  if(pinnedLimitField) payload.pinned_sessions_limit=parseInt(pinnedLimitField.value,10);
   const autoTitleRefreshSel=$('settingsAutoTitleRefresh');
   if(autoTitleRefreshSel) payload.auto_title_refresh_every=parseInt(autoTitleRefreshSel.value,10);
   const busyInputModeSel=$('settingsBusyInputMode');
@@ -5394,10 +5550,15 @@ async function _autosavePreferencesSettings(payload){
       if(typeof renderMessages==='function') renderMessages();
     }
     if(payload&&Object.prototype.hasOwnProperty.call(payload,'fade_text_effect')) window._fadeTextEffect=!!payload.fade_text_effect;
+    if(saved&&Object.prototype.hasOwnProperty.call(saved,'pinned_sessions_limit')) window._pinnedSessionsLimit=parseInt(saved.pinned_sessions_limit,10)||3;
     if(payload&&payload.show_tps!==undefined){
       window._showTps=!!(saved&&saved.show_tps);
       if(typeof clearMessageRenderCache==='function') clearMessageRenderCache();
       if(typeof renderMessages==='function') renderMessages();
+    }
+    if(payload&&payload.hide_empty_state_suggestions!==undefined){
+      window._hideEmptyStateSuggestions=!!(saved&&saved.hide_empty_state_suggestions);
+      if(typeof applyEmptyStateSuggestionPref==='function') applyEmptyStateSuggestionPref();
     }
     _settingsPreferencesAutosaveRetryPayload=null;
     _setPreferencesAutosaveStatus('saved');
@@ -5495,6 +5656,18 @@ async function loadSettingsPanel(){
         _scheduleAppearanceAutosave();
       };
     }
+    // Tab visibility chips (dynamically populated from DOM)
+    var hiddenTabs=[];
+    if(Array.isArray(settings.hidden_tabs)){
+      // Server value takes priority — even an empty array means "no tabs hidden"
+      hiddenTabs=settings.hidden_tabs.filter(function(s){return typeof s==='string'&&s.trim();});
+    }else{
+      // Server has no hidden_tabs key — fall back to localStorage
+      hiddenTabs=_getHiddenTabs();
+    }
+    _setHiddenTabs(hiddenTabs);
+    _applyTabVisibility(hiddenTabs);
+    _renderTabVisibilityChips();
     const resolvedLanguage=(typeof resolvePreferredLocale==='function')
       ? resolvePreferredLocale(settings.language, localStorage.getItem('hermes-lang'))
       : (settings.language || localStorage.getItem('hermes-lang') || 'en');
@@ -5571,8 +5744,26 @@ async function loadSettingsPanel(){
         _schedulePreferencesAutosave();
       },{once:false});
     }
+    const hideSuggestionsCb=$('settingsHideSuggestions');
+    if(hideSuggestionsCb){
+      hideSuggestionsCb.checked=settings.hide_empty_state_suggestions===true;
+      window._hideEmptyStateSuggestions=hideSuggestionsCb.checked;
+      if(typeof applyEmptyStateSuggestionPref==='function') applyEmptyStateSuggestionPref();
+      hideSuggestionsCb.addEventListener('change',()=>{
+        window._hideEmptyStateSuggestions=hideSuggestionsCb.checked;
+        if(typeof applyEmptyStateSuggestionPref==='function') applyEmptyStateSuggestionPref();
+        _schedulePreferencesAutosave();
+      },{once:false});
+    }
     const showTpsCb=$('settingsShowTps');
     if(showTpsCb){showTpsCb.checked=!!settings.show_tps;showTpsCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
+    const pinnedLimitField=$('settingsPinnedSessionsLimit');
+    if(pinnedLimitField){
+      pinnedLimitField.value=parseInt(settings.pinned_sessions_limit||3,10)||3;
+      window._pinnedSessionsLimit=parseInt(pinnedLimitField.value,10)||3;
+      pinnedLimitField.addEventListener('change',_schedulePreferencesAutosave,{once:false});
+      pinnedLimitField.addEventListener('input',()=>{window._pinnedSessionsLimit=parseInt(pinnedLimitField.value,10)||3;_schedulePreferencesAutosave();},{once:false});
+    }
     const fadeTextCb=$('settingsFadeTextEffect');
     if(fadeTextCb){fadeTextCb.checked=!!settings.fade_text_effect;window._fadeTextEffect=fadeTextCb.checked;fadeTextCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const simplifiedToolCb=$('settingsSimplifiedToolCalling');
@@ -5757,20 +5948,42 @@ function _buildPluginCard(plugin){
   const card=document.createElement('div');
   card.className='provider-card plugin-card';
   card.dataset.plugin=(plugin&&plugin.key)||'';
+  // `activation` is the canonical state from /api/plugins (added in #2659).
+  // Fall back to the older `enabled` boolean when the field is missing so
+  // the panel still works against older backends.
+  const activation=(plugin&&typeof plugin.activation==='string')
+    ? plugin.activation
+    : (plugin&&plugin.enabled===false ? 'disabled' : 'enabled');
+  const isProvider=activation==='exclusive'||activation==='provider';
   const hooks=Array.isArray(plugin&&plugin.hooks)?plugin.hooks:[];
+  // Provider plugins (memory/web/browser/etc.) register hooks on their
+  // category's dispatcher, not the four agent-wide visibility hooks the
+  // payload filters to. Show an explanatory line instead of the generic
+  // "No registered lifecycle hooks" when the visibility-hook list is empty.
   const hookHtml=hooks.length
     ? hooks.map(h=>`<span class="plugin-hook-badge">${esc(h)}</span>`).join('')
-    : '<span class="plugin-hook-empty">'+t('plugins_no_hooks')+'</span>';
+    : '<span class="plugin-hook-empty">'+t(isProvider?'plugins_provider_no_hooks':'plugins_no_hooks')+'</span>';
   const version=(plugin&&plugin.version)?' · v'+esc(plugin.version):'';
   const desc=(plugin&&plugin.description)?esc(plugin.description):t('plugins_no_description');
-  const enabled=plugin&&plugin.enabled!==false;
+  let badgeText;
+  let badgeClass;
+  if(isProvider){
+    badgeText=t('plugins_active_provider');
+    badgeClass='plugin-card-badge-provider';
+  }else if(activation==='enabled'){
+    badgeText=t('plugins_enabled');
+    badgeClass='';
+  }else{
+    badgeText=t('plugins_disabled');
+    badgeClass='plugin-card-badge-disabled';
+  }
   card.innerHTML=`
     <div class="provider-card-header plugin-card-header">
       <div class="provider-card-info">
         <div class="provider-card-name">${esc((plugin&&plugin.name)||t('plugins_unnamed'))}</div>
         <div class="provider-card-meta">${esc((plugin&&plugin.key)||'plugin')}${version}</div>
       </div>
-      <span class="provider-card-badge ${enabled?'':'plugin-card-badge-disabled'}">${enabled?t('plugins_enabled'):t('plugins_disabled')}</span>
+      <span class="provider-card-badge ${badgeClass}">${badgeText}</span>
     </div>
     <div class="provider-card-body plugin-card-body">
       <div class="provider-card-hint">${desc}</div>
@@ -6410,6 +6623,14 @@ async function checkUpdatesNow(){
     if(data.disabled){
       if(status){status.textContent=t('settings_updates_disabled');status.style.color='var(--muted)';}
     } else {
+      const errorParts=[];
+      const formatUpdateError=(typeof _formatUpdateCheckError==='function')
+        ? _formatUpdateCheckError
+        : ((label,info)=>info&&info.error?label:null);
+      const webuiError=formatUpdateError('WebUI',data.webui);
+      const agentError=formatUpdateError('Agent',data.agent);
+      if(webuiError) errorParts.push(webuiError);
+      if(agentError) errorParts.push(agentError);
       const parts=[];
       const formatUpdatePart=(typeof _formatUpdateTargetStatus==='function')
         ? _formatUpdateTargetStatus
@@ -6422,6 +6643,8 @@ async function checkUpdatesNow(){
         if(status){status.textContent=t('settings_updates_available').replace('{count}',parts.join(', '));status.style.color='var(--accent)';}
         // Also trigger the update banner
         if(typeof _showUpdateBanner==='function') _showUpdateBanner(data);
+      } else if(errorParts.length){
+        if(status){status.textContent=t('settings_update_check_failed')+': '+errorParts.join(', ');status.style.color='var(--error)';}
       } else {
         if(status){status.textContent=t('settings_up_to_date');status.style.color='var(--success)';}
         if(typeof _showUpdateBanner==='function') _showUpdateBanner(data);
@@ -6456,6 +6679,7 @@ async function saveSettings(andClose){
   const fadeTextEffect=!!($('settingsFadeTextEffect')||{}).checked;
   const showCliSessions=!!($('settingsShowCliSessions')||{}).checked;
   const showPreviousMessagingSessions=!!($('settingsShowPreviousMessagingSessions')||{}).checked;
+  const pinnedSessionsLimit=parseInt(($('settingsPinnedSessionsLimit')||{}).value,10)||3;
   const pw=($('settingsPassword')||{}).value;
   const theme=($('settingsTheme')||{}).value||'dark';
   const skin=($('settingsSkin')||{}).value||'default';
@@ -6480,6 +6704,7 @@ async function saveSettings(andClose){
   body.api_redact_enabled=!!($('settingsApiRedact')||{}).checked;
   body.show_cli_sessions=showCliSessions;
   body.show_previous_messaging_sessions=showPreviousMessagingSessions;
+  body.pinned_sessions_limit=pinnedSessionsLimit;
   body.sync_to_insights=!!($('settingsSyncInsights')||{}).checked;
   body.check_for_updates=!!($('settingsCheckUpdates')||{}).checked;
   body.whats_new_summary_enabled=!!($('settingsWhatsNewSummary')||{}).checked;
