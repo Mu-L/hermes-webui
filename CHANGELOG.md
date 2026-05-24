@@ -3,6 +3,18 @@
 
 ## [Unreleased]
 
+## [v0.51.120] — 2026-05-24 — Release CR (stage-batch2 — 3-PR low-risk batch — Bedrock provider / update check past-tag / CORS preflight)
+
+### Added
+
+- **PR #2786** by @munim — Surface AWS Bedrock as a configurable provider in the WebUI model picker. `api/config.py` registers `"bedrock": "AWS Bedrock"` in `PROVIDER_LABELS`, adds 6 default Bedrock model IDs (Claude Opus 4.7 / 4.6 / 4.5, Sonnet 4.6 / 4.5, Haiku 4.5) to `DEFAULT_MODELS["bedrock"]`, and teaches `_build_configured_model_badges()` to detect Bedrock when both `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are present (IAM-style auth, not single-API-key). Static fallback list is overridden at runtime by `hermes_cli.models.provider_model_ids("bedrock")` when the live AWS model list is reachable. Adds `tests/test_issue2720_bedrock_model_picker.py` with 11 test cases covering registry, defaults, env-detection, and runtime override. Resolves #2720.
+
+### Fixed
+
+- **PR #2789** by @munim — Update check no longer falsely reports "Up to date" when HEAD has moved hundreds of commits past the latest tag. The hermes-agent repository keeps committing to master between tagged releases, and the old `_check_repo_release()` returned `behind=0` (since `current_tag == latest_tag`) and stopped — so the user saw "Up to date" while the working tree was hundreds of commits behind. The fix: when `behind == 0`, run `git describe --tags --always`; if the result contains the `-N-gSHA` suffix (HEAD past tag), return `None` so `_check_repo_branch()` runs and reports the real commit gap. Adds 8 new test cases in `tests/test_updates.py` covering past-tag detection, equal-tag-and-HEAD pass-through, untagged-repo behavior, and the agent-cadence #2653 scenario. Resolves #2653.
+
+- **PR #2790** by @weidzhou — Add `do_OPTIONS()` handler in `server.py` so CORS preflight requests return `200 OK` with appropriate `Access-Control-Allow-*` headers instead of `501 Not Implemented`. Browsers sending a preflight OPTIONS for cross-origin API calls previously hit the BaseHTTPRequestHandler default and the entire CORS exchange was blocked. The handler narrowly responds only to OPTIONS — no broader CORS posture change to other endpoints. Resubmit of closed #2750 (which bundled unrelated session-index changes); this PR is the minimal preflight-only split that @nesquena-hermes and @AJV20 requested.
+
 ## [v0.51.119] — 2026-05-24 — Release CQ (stage-batch1 — 3-PR low-risk batch — tool cards / 404 recovery / Hepburn skin)
 
 ### Fixed
