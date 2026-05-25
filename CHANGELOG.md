@@ -3,6 +3,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Chat streaming now keeps a single live EventSource registered per session/stream, preventing reconnect or context-compaction paths from stacking subscribers and rendering one assistant token stream multiple times.
+
 ## [v0.51.134] — 2026-05-25 — Release DF (stage-batch16 — single-PR Windows path defaults)
 
 ### Fixed

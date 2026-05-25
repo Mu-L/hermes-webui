@@ -609,10 +609,11 @@ async function send(){
 
 const LIVE_STREAMS={};
 
-function closeLiveStream(sessionId, streamId){
+function closeLiveStream(sessionId, streamId, source){
   const live=LIVE_STREAMS[sessionId];
   if(!live) return;
   if(streamId&&live.streamId!==streamId) return;
+  if(source&&live.source!==source) return;
   try{live.source.close();}catch(_){ }
   delete LIVE_STREAMS[sessionId];
 }
@@ -747,8 +748,8 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
     if(_persistTimer) return;
     _persistTimer=setTimeout(()=>{_persistTimer=null;persistInflightState();},2000);
   }
-  function _closeSource(){
-    closeLiveStream(activeSid, streamId);
+  function _closeSource(source){
+    closeLiveStream(activeSid, streamId, source);
   }
   function _stripLiveVisibleAssistantEchoFromThinking(text, snippets){
     let out=String(text||'');
@@ -1455,6 +1456,12 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
   }
 
   function _wireSSE(source){
+    const existingLive=LIVE_STREAMS[activeSid];
+    if(existingLive&&existingLive.source&&existingLive.source!==source){
+      try{existingLive.source.close();}catch(_){ }
+    }
+    LIVE_STREAMS[activeSid]={streamId,source};
+
     // Note on #631 Bug B: the original PR description stated the server
     // "replays buffered token events" on reconnect, and proposed resetting
     // the accumulators here so the re-sent tokens wouldn't double the prefix.
@@ -2081,13 +2088,14 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
 
     source.addEventListener('error',async e=>{
       if(_terminalStateReached || _streamFinalized){
-        _closeSource();
+        _closeSource(source);
         return;
       }
       if(typeof recordClientSSEError==='function') recordClientSSEError('chat-response',{ready_state:source?source.readyState:null,session_id:activeSid,stream_id:streamId,reason:'chat EventSource.onerror'});
       source.close();
       if(_deferStreamErrorIfOffline()) return;
       if(_deferStreamErrorIfPageHidden()) return;
+      _closeSource(source);
       // Attempt one reconnect if the stream is still active server-side
       if(!_reconnectAttempted && streamId){
         _reconnectAttempted=true;
