@@ -2322,7 +2322,7 @@ body.resizing .sidebar{transition:none!important;}
 .tool-card-more{background:none;border:none;color:var(--blue);font-size:10px;cursor:pointer;padding:3px 0 0;opacity:.7;display:block;}
 .tool-card-more:hover{opacity:1;}
 /* Subagent cards: indented with accent border */
-.tool-card-subagent{border-left:2px solid var(--accent-bg);margin-left:8px;}
+.tool-card.tool-card-subagent{border-left:2px solid var(--accent-bg);margin-left:8px;}
 /* Token usage badge below assistant messages */
 .msg-usage{font-size:11px;color:var(--muted);opacity:.6;margin-top:2px;padding-left:42px;}
 .msg-usage:hover{opacity:1;}
@@ -2405,8 +2405,8 @@ body.resizing .sidebar{transition:none!important;}
     display:none;
   }
 }
-.tool-card{background:var(--surface-subtle);border:1px solid var(--border-subtle);border-radius:var(--radius-card);margin:2px 0;overflow:hidden;transition:border-color .15s,background-color .15s;}
-.tool-card:hover{border-color:var(--border-muted);background:var(--surface-subtle-hover);}
+.tool-card{background:var(--surface-subtle);border:1px solid var(--border-muted);border-left:2px solid var(--border-muted);border-radius:var(--radius-card);margin:2px 0;overflow:hidden;transition:border-color .15s,background-color .15s;}
+.tool-card:hover{border-color:var(--border2);background:var(--surface-subtle-hover);}
 .tool-card-running{border-color:var(--accent-bg-strong);background:var(--accent-bg);}
 .tool-card-header{display:flex;align-items:center;gap:var(--space-2);padding:var(--space-1) var(--space-3);cursor:pointer;user-select:none;}
 .tool-card-icon{font-size:13px;flex-shrink:0;opacity:.65;}

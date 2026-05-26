@@ -11,6 +11,7 @@
 
 - Contributor guidance now requires explicit `Contract Routing` for contract-affecting PRs and `Contract Change` when a PR intentionally changes an existing product, runtime, or review contract. Contract tests must move with the corresponding docs instead of silently redefining behavior by themselves, with the current static coverage documented as advisory rather than a GitHub policy gate.
 - Removing a provider key now surfaces the server's specific CSRF rejection reason ("Session expired - reload the page", "Cross-origin mismatch - check reverse proxy headers", or the fallback "Cross-origin request rejected") when the underlying POST is rejected with 403, instead of swallowing all three into one generic toast. (Refs #2572)
+- Tool cards in the transcript now use a slightly stronger border and a 2px left edge so tool output stays visually distinct from final assistant prose without requiring hover. (#2867)
 
 ## [v0.51.137] — 2026-05-25 — Release DI (stage-batch19 — 6-PR medium-risk batch)
 
