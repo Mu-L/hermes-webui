@@ -32,3 +32,18 @@ def test_contracts_requires_docs_tests_and_pr_body_to_move_together():
 
     missing = [term for term in required_terms if term not in text]
     assert missing == []
+
+
+def test_contract_guidance_names_static_coverage_as_advisory_not_enforcement():
+    text = CONTRACTS.read_text(encoding="utf-8")
+
+    required_terms = [
+        "advisory",
+        "not an automated policy gate",
+        "does not enforce",
+        "PR-body content",
+        "release-time",
+    ]
+
+    missing = [term for term in required_terms if term not in text]
+    assert missing == []

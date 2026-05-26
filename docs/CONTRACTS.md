@@ -118,6 +118,13 @@ product semantics must not silently redefine the contract by asserting the
 opposite behavior without updating the public docs and naming the change in the
 PR body.
 
+The static tests for this guidance are advisory coverage. They pin contributor
+wording so the rule stays visible. This advisory coverage is not an automated
+policy gate; static coverage is not an automated policy gate and does not enforce
+PR-body content on GitHub. A future release-time or CI check could
+surface contract-affecting diffs whose PR body lacks `Contract Routing`, but this
+document only defines the review expectation.
+
 Release batches should list included contract-affecting PRs explicitly so
 reviewers can distinguish ordinary green-CI fixes from changes that update the
 project's product or runtime guardrails.
