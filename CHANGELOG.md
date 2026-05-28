@@ -3,6 +3,9 @@
 
 ## [Unreleased]
 
+### Added
+- Session discoverability audit now has a default-dry-run `--repair-safe` routine for deterministic cleanup: stale persisted WebUI-as-CLI flags can be cleared from sidecars/index entries, and messageful WebUI rows present only in `state.db` can be materialized into sidecars/index entries when `--apply --backup-dir <dir>` is explicitly provided.
+
 ## [v0.51.152] — 2026-05-28 — Release DX (stage-batch34 — single-PR optional gateway-backed browser chat)
 
 ### Added
