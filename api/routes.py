@@ -3552,6 +3552,7 @@ def _handle_insights(handler, parsed) -> bool:
                            estimated_cost_usd, started_at, ended_at
                     FROM sessions
                     WHERE (started_at >= ? OR ended_at >= ?)
+                      AND COALESCE(source, '') != 'webui'
                 """, (cutoff, cutoff))
                 for row in cur.fetchall():
                     _input = _safe_usage_int(row["input_tokens"])
