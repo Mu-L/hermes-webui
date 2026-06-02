@@ -11,7 +11,7 @@ from pathlib import Path
 from api.config import MAX_UPLOAD_BYTES, STATE_DIR
 from api.helpers import j, bad
 from api.models import get_session
-from api.workspace import safe_resolve_ws, resolve_trusted_workspace
+from api.workspace import safe_resolve_ws, resolve_trusted_workspace, open_anchored_create_fd
 
 
 def _max_extracted_bytes() -> int:
@@ -244,7 +244,10 @@ def extract_archive(file_bytes: bytes, filename: str, workspace: Path):
                             f'Possible zip bomb.'
                         )
                     member_path.parent.mkdir(parents=True, exist_ok=True)
-                    with zf.open(member) as src, open(member_path, 'wb') as dst:
+                    # #3398: create each member fd-anchored under the TRUE workspace
+                    # root (not the mutable dest_dir), O_CREAT|O_EXCL|O_NOFOLLOW.
+                    _mfd = open_anchored_create_fd(workspace, member_path)
+                    with zf.open(member) as src, os.fdopen(_mfd, 'wb', closefd=True) as dst:
                         _chunk_size = 65536
                         while True:
                             chunk = src.read(_chunk_size)
@@ -284,7 +287,9 @@ def extract_archive(file_bytes: bytes, filename: str, workspace: Path):
                     member_path.parent.mkdir(parents=True, exist_ok=True)
                     src_obj = tf.extractfile(member)
                     if src_obj:
-                        with src_obj as src, open(member_path, 'wb') as dst:
+                        # #3398: fd-anchored member create under the TRUE workspace root.
+                        _mfd = open_anchored_create_fd(workspace, member_path)
+                        with src_obj as src, os.fdopen(_mfd, 'wb', closefd=True) as dst:
                             _chunk_size = 65536
                             while True:
                                 chunk = src.read(_chunk_size)
@@ -458,7 +463,19 @@ def handle_workspace_upload(handler):
                 else:
                     return j(handler, {'error': 'Too many uploads with the same filename'}, status=400)
 
-            dest.write_bytes(file_bytes)
+            # #3398 TOCTOU hardening: create the destination via an anchored
+            # openat-walk from the true workspace root with O_CREAT|O_EXCL|
+            # O_NOFOLLOW, so a symlink raced into any path component after the
+            # containment checks above cannot redirect the write outside the
+            # workspace. The dedup loop guarantees `dest` does not exist.
+            try:
+                _wfd = open_anchored_create_fd(workspace, dest.resolve())
+            except FileExistsError:
+                return j(handler, {'error': f'Upload destination already exists: {safe_name}'}, status=409)
+            except (ValueError, OSError):
+                return j(handler, {'error': f'Path traversal blocked: {safe_name}'}, status=403)
+            with os.fdopen(_wfd, 'wb', closefd=True) as _wfh:
+                _wfh.write(file_bytes)
             mime = mimetypes.guess_type(safe_name)[0] or 'application/octet-stream'
 
             # For archives, optionally extract into the target directory.
