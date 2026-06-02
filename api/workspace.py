@@ -857,12 +857,20 @@ def list_dir(workspace: Path, rel: str='.'):
     target_resolved = target.resolve()
     entries = []
 
-    def _process(name, is_symlink, raw_link, lstat_result):
+    def _process(name, is_symlink, raw_link, lstat_result, reachable):
         """Append one directory entry. ``raw_link`` is the os.readlink() result
         for symlinks (else None); ``lstat_result`` is an os.stat_result obtained
-        with follow_symlinks=False (else None)."""
+        with follow_symlinks=False (else None); ``reachable`` is False when a
+        follow_symlinks=True stat raised (broken target or symlink loop)."""
         if is_symlink:
             if raw_link is None:
+                return
+            # A symlink whose follow-stat raised (ELOOP / broken target) can never
+            # be opened — filter it. This catches mutual/self loops portably across
+            # Python versions where Path.resolve() loop handling differs (3.11
+            # raises RuntimeError, 3.13 can return a path), so do not rely on
+            # resolve() raising for cycle detection.
+            if not reachable:
                 return
             try:
                 link_target = (target_resolved / raw_link).resolve()
@@ -962,7 +970,14 @@ def list_dir(workspace: Path, rel: str='.'):
                     lst = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
                 except OSError:
                     lst = None
-                _process(name, is_symlink, raw_link, lst)
+                # reachable: follow-stat succeeds (filters ELOOP/broken symlinks).
+                reachable = True
+                if is_symlink:
+                    try:
+                        os.stat(name, dir_fd=dir_fd, follow_symlinks=True)
+                    except OSError:
+                        reachable = False
+                _process(name, is_symlink, raw_link, lst, reachable)
                 if len(entries) >= 200:
                     break
         finally:
@@ -998,7 +1013,14 @@ def list_dir(workspace: Path, rel: str='.'):
                 lst = item.lstat()
             except OSError:
                 lst = None
-            _process(name, is_symlink, raw_link, lst)
+            # reachable: follow-stat succeeds (filters ELOOP/broken symlinks).
+            reachable = True
+            if is_symlink:
+                try:
+                    os.stat(str(item), follow_symlinks=True)
+                except OSError:
+                    reachable = False
+            _process(name, is_symlink, raw_link, lst, reachable)
             if len(entries) >= 200:
                 break
     return entries
