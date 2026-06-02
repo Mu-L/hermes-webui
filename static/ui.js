@@ -1108,7 +1108,25 @@ function _findModelInDropdown(modelId, sel, preferredProviderId){
   const base=target.replace(/\.\d+$/,'');  // strip trailing version number
   const useBase=base.length<=4||base===target; // bare root — stripping changed nothing meaningful
   const prefixTarget=useBase?base:target;
-  const partial=opts.find(o=>norm(o).startsWith(prefixTarget));
+  // When the typed target is a COMPLETE versioned name (ends in a digit, e.g.
+  // "mimo-v2.5" → norm "mimo.v2.5"), a prefix hit on a longer option is only
+  // legitimate if the extra text continues the VERSION ("." + digit, e.g.
+  // mimo.v2 → mimo.v2.5...). If the extra text is a variant/tier suffix
+  // ("." + non-digit, e.g. mimo.v2.5.pro from "mimo-v2.5-pro"), the user asked
+  // for the base model that simply isn't in the catalog — do NOT silently snap
+  // them to the -pro/-flash tier (and a different price tier). Let resolution
+  // fall through to null so the caller reports no-match instead. (#3368)
+  const targetEndsInVersion=/\d$/.test(target);
+  const partial=opts.find(o=>{
+    const no=norm(o);
+    if(!no.startsWith(prefixTarget)) return false;
+    if(targetEndsInVersion && no!==target){
+      const rest=no.slice(target.length);
+      // reject "." + non-digit (variant/tier suffix); allow "" or "." + digit (version continuation)
+      if(rest && !/^\.\d/.test(rest)) return false;
+    }
+    return true;
+  });
   return partial||null;
 }
 

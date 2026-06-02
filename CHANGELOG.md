@@ -3,6 +3,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- `/model <name>` no longer silently selects a longer tier variant when the typed name is a complete versioned model that isn't itself in the catalog. Typing `/model mimo-v2.5` when only `mimo-v2.5-pro` exists previously snapped to the Pro tier (a different, paid model the user didn't ask for). The real fault was in `_findModelInDropdown` (`static/ui.js`) — its step-3 prefix match returned the longer `-pro`/`-flash` variant before the `commands.js` fallback (hardened in #3394) ever ran, so the earlier fix never reached this path. Both matchers now treat a query that ends in a version number specially: a longer option is accepted only when the extra text continues the version (e.g. `mimo-v2` → `mimo-v2.5-pro`), not when it is a variant/tier suffix (`mimo-v2.5` → `mimo-v2.5-pro` is rejected). When nothing matches cleanly, `/model` reports no match and suggests the nearest variant ("did you mean …?") instead of switching. Legitimate fuzzy shorthand (`/model gpt-5`, `/model claude`) is unchanged, and the bare model still resolves exactly when it exists in the catalog (closes #3368).
+
 ## [v0.51.217] — 2026-06-02 — Release GK (stage-p2f — decode and complete zh-Hant locale strings)
 
 ### Changed

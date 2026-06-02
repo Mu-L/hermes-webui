@@ -327,17 +327,56 @@ function cmdClear(){
 // whose value or label contains the query. Preferring the shortest match keeps
 // a specific query like "mimo-v2.5" from being shadowed by a longer variant
 // such as "mimo-v2.5-pro". See issue #3368.
+//
+// #3368 follow-up: a COMPLETE versioned query (ends in a digit, e.g.
+// "mimo-v2.5") must not match a variant/tier suffix (e.g. "mimo-v2.5-pro") via
+// substring — that silently upgrades the user to a different (paid) tier they
+// did not ask for. Such a candidate is only accepted when the query also
+// matches the option's visible label as a *whole word*, or when the extra text
+// continues a version number. Otherwise the longer tier is rejected here and
+// surfaced as a suggestion instead.
+function _looksLikeVersionedModel(query){
+  // e.g. "mimo-v2.5", "gpt-5.5", "claude-opus-4.6" — ends in a digit.
+  return /\d$/.test(String(query||''));
+}
 function _bestModelMatch(options,query){
   let best=null;
+  const versioned=_looksLikeVersionedModel(query);
   for(const opt of options){
     const value=opt.value.toLowerCase();
     const text=opt.textContent.toLowerCase();
     if(value===query||text===query) return opt.value;
     if(value.includes(query)||text.includes(query)){
+      if(versioned){
+        // Reject a longer variant where the query is immediately followed by a
+        // tier/variant suffix ("-pro", "-flash", " pro", etc.) rather than a
+        // version continuation. Tested on the option value (canonical id).
+        const idx=value.indexOf(query);
+        const after=idx>=0?value.charAt(idx+query.length):'';
+        // after === '' → query is a suffix of value (exact-ish, allow)
+        // after is a digit or '.' → version continuation (allow, e.g. v2 → v2.5)
+        // after is '-' or other → variant/tier suffix (reject)
+        if(after && after!=='.' && !/\d/.test(after)) continue;
+      }
       if(best===null||opt.value.length<best.length) best=opt.value;
     }
   }
   return best;
+}
+
+// When a versioned query has no clean match, find the closest catalog option
+// (a longer variant that the query is a prefix of) to offer as a suggestion,
+// e.g. "mimo-v2.5" → "mimo-v2.5-pro". Returns the suggested option value, or ''.
+function _nearestModelSuggestion(options,query){
+  let suggestion='';
+  for(const opt of options){
+    const value=opt.value.toLowerCase();
+    if(value.includes(query)){
+      const cand=opt.value;
+      if(!suggestion||cand.length<suggestion.length) suggestion=cand;
+    }
+  }
+  return suggestion;
 }
 
 async function cmdModel(args){
@@ -397,7 +436,19 @@ async function cmdModel(args){
       }catch(_){/* fall through to "no model match" */}
     }
   }
-  if(!match){showToast(t('no_model_match')+`"${args}"`);return;}
+  if(!match){
+    // #3368: when a complete versioned name (e.g. "mimo-v2.5") doesn't match
+    // because only a longer tier variant exists ("mimo-v2.5-pro"), don't snap
+    // to it — say no-match and suggest the near variant so the user can opt in.
+    let msg=t('no_model_match')+`"${args}"`;
+    const suggestion=_nearestModelSuggestion(sel.options,q);
+    if(suggestion){
+      const sg=t('model_did_you_mean');
+      msg+=(typeof sg==='function')?sg(suggestion):(sg+suggestion);
+    }
+    showToast(msg);
+    return;
+  }
   sel.value=match;
   await sel.onchange();
   showToast(t('switched_to')+match);
