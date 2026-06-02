@@ -176,3 +176,76 @@ def test_anchored_create_nested_autocreates_dirs(tmp_path):
     os.write(fd, b"hello")
     os.close(fd)
     assert (workspace / "a" / "b" / "file.txt").read_text() == "hello"
+
+
+def test_list_read_create_work_on_no_dir_fd_fallback(tmp_path, monkeypatch):
+    """The no-dir_fd portability fallback (Windows path) must still list, read,
+    and create within the workspace, and still hide/block external symlinks via
+    the static safe_resolve_ws guard — no fd-relative API that would brick on
+    platforms without os.supports_dir_fd."""
+    import os
+
+    import api.workspace as w
+
+    monkeypatch.setattr(w, "_DIR_FD_OK", False)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "a.txt").write_text("hi", encoding="utf-8")
+    (workspace / "sub").mkdir()
+    (workspace / "internal").symlink_to(workspace / "sub")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "s.txt").write_text("x", encoding="utf-8")
+    (workspace / "escape").symlink_to(outside)
+
+    names = {e["name"] for e in w.list_dir(workspace, ".")}
+    assert "a.txt" in names
+    assert "internal" in names          # legit internal symlink listed
+    assert "escape" not in names        # external symlink hidden
+    assert w.read_file_content(workspace, "a.txt")["content"] == "hi"
+
+    fd = w.open_anchored_create_fd(workspace, workspace / "new" / "f.txt")
+    os.write(fd, b"ok")
+    os.close(fd)
+    assert (workspace / "new" / "f.txt").read_text() == "ok"
+
+
+def test_read_blocked_when_workspace_root_raced_to_symlink(tmp_path):
+    """If the workspace root itself is swapped to an external symlink after
+    resolve() but before the anchored open, read_file_content must refuse
+    (O_NOFOLLOW on the root open), not follow it and leak external content."""
+    import os
+    import shutil
+
+    import api.workspace as w
+
+    if not w._DIR_FD_OK:
+        pytest.skip("anchored root-open race only applies on dir_fd platforms")
+
+    outside = tmp_path / "evil"
+    outside.mkdir()
+    (outside / "f.txt").write_text("SECRET-LEAK", encoding="utf-8")
+    wsroot = tmp_path / "wsroot"
+    wsroot.mkdir()
+    (wsroot / "f.txt").write_text("LEGIT", encoding="utf-8")
+
+    real_open = os.open
+    state = {"swapped": False}
+
+    def racing_open(path, *args, **kwargs):
+        if (not state["swapped"]) and "dir_fd" not in kwargs and str(path) == str(wsroot.resolve()):
+            state["swapped"] = True
+            shutil.rmtree(str(wsroot))
+            os.symlink(str(outside), str(wsroot))
+        return real_open(path, *args, **kwargs)
+
+    os.open = racing_open
+    try:
+        try:
+            result = w.read_file_content(wsroot, "f.txt")
+            assert "SECRET" not in result["content"], "root-swap race leaked external content"
+        except (FileNotFoundError, ValueError, NotADirectoryError, OSError):
+            pass  # refused — correct
+    finally:
+        os.open = real_open

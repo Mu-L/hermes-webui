@@ -716,7 +716,7 @@ def open_anchored_fd(workspace: Path, target: Path, *, want_dir: bool) -> int:
     try:
         rel_parts = target.relative_to(root_resolved).parts
     except ValueError:
-        raise ValueError(f"Path traversal blocked: {target}")
+        raise ValueError(f"Path traversal blocked: {target}") from None
 
     if not _DIR_FD_OK:
         # Windows / no openat: fall back to a plain pathname open. No new race
@@ -728,9 +728,11 @@ def open_anchored_fd(workspace: Path, target: Path, *, want_dir: bool) -> int:
         except OSError:
             raise FileNotFoundError(f"Not found: {target}") from None
 
-    # Open the (trusted) workspace root. Following symlinks to REACH the root is
-    # fine (e.g. macOS /tmp -> /private/tmp); we only forbid symlinks BELOW it.
-    fd = os.open(str(root_resolved), os.O_RDONLY | _O_DIRECTORY)
+    # Open the (trusted) workspace root. root_resolved is canonical (resolve()
+    # collapsed any symlinks to REACH it, e.g. macOS /tmp -> /private/tmp), so its
+    # final component is legitimately a real directory — O_NOFOLLOW here only fires
+    # if the root itself was raced into a symlink after resolve() (escape attempt).
+    fd = os.open(str(root_resolved), os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW)
     try:
         for i, part in enumerate(rel_parts):
             is_last = i == len(rel_parts) - 1
@@ -740,7 +742,7 @@ def open_anchored_fd(workspace: Path, target: Path, *, want_dir: bool) -> int:
                 nfd = os.open(part, flags, dir_fd=fd)
             except OSError:
                 # ELOOP (component is a symlink — swapped in) or missing/wrong type.
-                raise FileNotFoundError(f"Not found: {target}")
+                raise FileNotFoundError(f"Not found: {target}") from None
             os.close(fd)
             fd = nfd
         return fd
@@ -769,14 +771,16 @@ def open_anchored_create_fd(root: Path, dest: Path) -> int:
     try:
         rel_parts = dest.relative_to(root_resolved).parts
     except ValueError:
-        raise ValueError(f"Path traversal blocked: {dest}")
+        raise ValueError(f"Path traversal blocked: {dest}") from None
     if not rel_parts:
         raise ValueError(f"Invalid destination: {dest}")
 
     if not _DIR_FD_OK:
+        # Windows / no openat: create parent dirs then exclusively create the leaf.
+        dest.parent.mkdir(parents=True, exist_ok=True)
         return os.open(str(dest), os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW, 0o644)
 
-    fd = os.open(str(root_resolved), os.O_RDONLY | _O_DIRECTORY)
+    fd = os.open(str(root_resolved), os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW)
     try:
         for part in rel_parts[:-1]:
             try:
@@ -786,7 +790,7 @@ def open_anchored_create_fd(root: Path, dest: Path) -> int:
                 nfd = os.open(part, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW, dir_fd=fd)
             except OSError:
                 # ELOOP — component swapped to a symlink (escape attempt).
-                raise FileNotFoundError(f"Not found: {dest}")
+                raise FileNotFoundError(f"Not found: {dest}") from None
             os.close(fd)
             fd = nfd
         return os.open(
@@ -802,6 +806,49 @@ def open_anchored_create_fd(root: Path, dest: Path) -> int:
             pass
 
 
+def make_anchored_dir(root: Path, dest: Path) -> None:
+    """Create directory ``dest`` (and any missing parents) race-safely under ``root``.
+
+    Walks from ``root`` via openat + O_NOFOLLOW, creating each missing component
+    with mkdir(dir_fd=...), so a symlink raced into any component cannot make the
+    server create directories outside ``root``. Idempotent (existing dirs are
+    fine). Raises ValueError if ``dest`` is not under ``root``, FileNotFoundError
+    if a component was swapped to a symlink. On platforms without dir_fd support
+    (Windows) falls back to a plain Path.mkdir — no regression.
+    """
+    root_resolved = root.resolve()
+    dest_resolved = dest.resolve()
+    if dest_resolved == root_resolved:
+        return
+    try:
+        rel_parts = dest_resolved.relative_to(root_resolved).parts
+    except ValueError:
+        raise ValueError(f"Path traversal blocked: {dest}") from None
+
+    if not _DIR_FD_OK:
+        dest.mkdir(parents=True, exist_ok=True)
+        return
+
+    fd = os.open(str(root_resolved), os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW)
+    try:
+        for part in rel_parts:
+            try:
+                nfd = os.open(part, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW, dir_fd=fd)
+            except FileNotFoundError:
+                os.mkdir(part, 0o755, dir_fd=fd)
+                nfd = os.open(part, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW, dir_fd=fd)
+            except OSError:
+                # ELOOP — component swapped to a symlink (escape attempt).
+                raise FileNotFoundError(f"Not found: {dest}") from None
+            os.close(fd)
+            fd = nfd
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
 def list_dir(workspace: Path, rel: str='.'):
     target = safe_resolve_ws(workspace, rel)
     if not target.is_dir():
@@ -810,18 +857,79 @@ def list_dir(workspace: Path, rel: str='.'):
     target_resolved = target.resolve()
     entries = []
 
-    # #3398 TOCTOU hardening: open the directory via an anchored openat-walk
-    # (O_NOFOLLOW on every component) and enumerate via the verified fd
-    # (os.scandir(fd)), so a path component swapped to an escaping symlink after
-    # safe_resolve_ws() cannot redirect the listing. Per-entry metadata is read
-    # fd-relative (fstatat/readlinkat) rather than by re-resolving from the top.
-    dir_fd = open_anchored_fd(workspace, target, want_dir=True)
-    try:
-        st = os.fstat(dir_fd)
-        if not stat.S_ISDIR(st.st_mode):
-            raise FileNotFoundError(f"Not a directory: {rel}")
+    def _process(name, is_symlink, raw_link, lstat_result):
+        """Append one directory entry. ``raw_link`` is the os.readlink() result
+        for symlinks (else None); ``lstat_result`` is an os.stat_result obtained
+        with follow_symlinks=False (else None)."""
+        if is_symlink:
+            if raw_link is None:
+                return
+            try:
+                link_target = (target_resolved / raw_link).resolve()
+            except (OSError, RuntimeError):
+                return
+            # Cycle detection: skip if symlink points back to current dir or root.
+            if link_target == target_resolved or link_target == ws_resolved:
+                return
+            try:
+                target_resolved.relative_to(link_target)
+                return  # target is under link_target — ancestor → cycle
+            except ValueError:
+                pass
+            # Hide symlinks that resolve outside the workspace (can never be opened).
+            try:
+                link_target.relative_to(ws_resolved)
+            except ValueError:
+                return
+            if _is_blocked_system_path(link_target):
+                return
+            is_dir = link_target.is_dir()
+            display_path = name
+            if rel and rel != '.':
+                display_path = rel + '/' + display_path
+            mtime_ns = lstat_result.st_mtime_ns if lstat_result is not None else None
+            entry = {
+                'name': name,
+                'path': display_path,
+                'type': 'symlink',
+                'target': str(link_target),
+                'is_dir': is_dir,
+                'mtime_ns': mtime_ns,
+            }
+            if not is_dir:
+                try:
+                    entry['size'] = link_target.stat().st_size
+                except OSError:
+                    entry['size'] = None
+            entries.append(entry)
+        else:
+            entry_path = name
+            if rel and rel != '.':
+                entry_path = rel + '/' + name
+            if lstat_result is not None:
+                is_file = stat.S_ISREG(lstat_result.st_mode)
+                size = lstat_result.st_size if is_file else None
+                mtime_ns = lstat_result.st_mtime_ns
+                is_dir_entry = stat.S_ISDIR(lstat_result.st_mode)
+            else:
+                size = None
+                mtime_ns = None
+                is_dir_entry = False
+            entries.append({
+                'name': name,
+                'path': entry_path,
+                'type': 'dir' if is_dir_entry else 'file',
+                'size': size,
+                'mtime_ns': mtime_ns,
+            })
 
-        def _sort_key(de):
+    if _DIR_FD_OK:
+        # #3398 TOCTOU hardening (Linux/macOS): open the directory via an anchored
+        # openat-walk (O_NOFOLLOW on every component) and enumerate via the verified
+        # fd (os.scandir(fd) + fd-relative fstatat/readlinkat), so a path component
+        # swapped to an escaping symlink after safe_resolve_ws() cannot redirect the
+        # listing.
+        def _sort_key_de(de):
             try:
                 is_link = de.is_symlink()
             except OSError:
@@ -834,90 +942,65 @@ def list_dir(workspace: Path, rel: str='.'):
                     pass
             return (not is_link, is_file, de.name.lower())
 
-        with os.scandir(dir_fd) as scan:
-            scandir_entries = sorted(scan, key=_sort_key)
-
-        for item in scandir_entries:
-            name = item.name
-            if item.is_symlink():
-                # Resolve the symlink target (raw readlink → absolute, symlink-aware).
-                try:
-                    raw = os.readlink(name, dir_fd=dir_fd)
-                    link_target = (target_resolved / raw).resolve()
-                except (OSError, RuntimeError):
-                    continue
-                # Cycle detection: skip if symlink points back to current dir,
-                # workspace root, or any ancestor of current dir.
-                if (link_target == target_resolved or link_target == ws_resolved):
-                    continue
-                try:
-                    target_resolved.relative_to(link_target)
-                    # target is under link_target — link_target is an ancestor → cycle
-                    continue
-                except ValueError:
-                    pass
-                # Hide symlinks that resolve outside the workspace. Traversing them
-                # would be blocked by the anchored open anyway, so listing them would
-                # advertise entries that can never be opened.
-                try:
-                    link_target.relative_to(ws_resolved)
-                except ValueError:
-                    continue
-                # Block symlinks that resolve to system directories.
-                if _is_blocked_system_path(link_target):
-                    continue
-                is_dir = link_target.is_dir()
-                # Keep the display path relative to workspace (don't follow the link)
-                display_path = name
-                if rel and rel != '.':
-                    display_path = rel + '/' + display_path
-                try:
-                    item_stat = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-                    mtime_ns = item_stat.st_mtime_ns
-                except OSError:
-                    mtime_ns = None
-                entry = {
-                    'name': name,
-                    'path': display_path,
-                    'type': 'symlink',
-                    'target': str(link_target),
-                    'is_dir': is_dir,
-                    'mtime_ns': mtime_ns,
-                }
-                if not is_dir:
+        dir_fd = open_anchored_fd(workspace, target, want_dir=True)
+        try:
+            st = os.fstat(dir_fd)
+            if not stat.S_ISDIR(st.st_mode):
+                raise FileNotFoundError(f"Not a directory: {rel}")
+            with os.scandir(dir_fd) as scan:
+                scandir_entries = sorted(scan, key=_sort_key_de)
+            for de in scandir_entries:
+                name = de.name
+                is_symlink = de.is_symlink()
+                raw_link = None
+                if is_symlink:
                     try:
-                        entry['size'] = link_target.stat().st_size
+                        raw_link = os.readlink(name, dir_fd=dir_fd)
                     except OSError:
-                        entry['size'] = None
-                entries.append(entry)
-            else:
-                entry_path = name
-                if rel and rel != '.':
-                    entry_path = rel + '/' + name
+                        raw_link = None
                 try:
-                    item_stat = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-                    is_file = stat.S_ISREG(item_stat.st_mode)
-                    size = item_stat.st_size if is_file else None
-                    mtime_ns = item_stat.st_mtime_ns
-                    is_dir_entry = stat.S_ISDIR(item_stat.st_mode)
+                    lst = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
                 except OSError:
-                    size = None
-                    mtime_ns = None
-                    is_dir_entry = False
-                entries.append({
-                    'name': name,
-                    'path': entry_path,
-                    'type': 'dir' if is_dir_entry else 'file',
-                    'size': size,
-                    'mtime_ns': mtime_ns,
-                })
+                    lst = None
+                _process(name, is_symlink, raw_link, lst)
+                if len(entries) >= 200:
+                    break
+        finally:
+            try:
+                os.close(dir_fd)
+            except OSError:
+                pass
+    else:
+        # Portability fallback (Windows / no dir_fd): path-based enumeration after
+        # safe_resolve_ws(). No anchored-fd race protection on these platforms, but
+        # no regression vs the prior behaviour (creating symlinks on Windows needs
+        # admin anyway), and safe_resolve_ws() still blocks the static escape.
+        def _sort_key_p(p: Path):
+            is_link = p.is_symlink()
+            is_file = False
+            if not is_link:
+                try:
+                    is_file = p.is_file()
+                except OSError:
+                    pass
+            return (not is_link, is_file, p.name.lower())
+
+        for item in sorted(target.iterdir(), key=_sort_key_p):
+            name = item.name
+            is_symlink = item.is_symlink()
+            raw_link = None
+            if is_symlink:
+                try:
+                    raw_link = os.readlink(str(item))
+                except OSError:
+                    raw_link = None
+            try:
+                lst = item.lstat()
+            except OSError:
+                lst = None
+            _process(name, is_symlink, raw_link, lst)
             if len(entries) >= 200:
                 break
-    finally:
-        try:
-            os.close(dir_fd)
-        except OSError:
-            pass
     return entries
 
 
