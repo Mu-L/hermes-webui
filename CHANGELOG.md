@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [v0.51.210] — 2026-06-02 — Release GD (stage-batch1 — model-picker multi-slash fix + extensionless preview highlighting)
+
+### Fixed
+- Model picker no longer snaps to the wrong model when multiple multi-slash model IDs from the same proxy provider share the same base name. Exact-match priority in `_findModelInDropdown` and first-segment-only stripping in `_normalizeConfiguredModelKey` / `_norm_model_id` prevent collisions in selection, badge assignment, and configured-entry dedup (#3360, @b3nw).
+- Workspace file previews now syntax-highlight common code/config filenames without useful extensions, including `Dockerfile`, `Dockerfile.*`, `Makefile`, `GNUmakefile`, `CMakeLists.txt`, `.gitignore`, and `.dockerignore` (#3365, @AJV20).
+
 ## [v0.51.209] — 2026-06-02 — Release GC (WebUI dashboard plugin system with iframe isolation)
 
 ### Added
