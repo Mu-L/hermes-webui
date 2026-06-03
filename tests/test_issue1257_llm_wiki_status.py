@@ -100,3 +100,40 @@ def test_insights_panel_fetches_and_renders_llm_wiki_status_card():
     assert "wiki-status-card" in style_src
     assert "raw/" in panels_src
     assert "recent_entries" not in panels_src
+
+
+def test_last_writer_reads_frontmatter(tmp_path):
+    """#3455 part 2: the Last writer field reads page frontmatter updated_by/writer/author."""
+    import api.routes as routes
+
+    wiki = tmp_path / "wiki"
+    _write(wiki / "entities" / "a.md", "---\ntitle: A\nupdated_by: alice\n---\nbody\n")
+    pages = routes._llm_wiki_page_files(wiki)
+    assert routes._llm_wiki_last_writer(wiki, pages) == "alice"
+
+
+def test_last_writer_rejects_symlink_outside_wiki(tmp_path):
+    """#3455 review (Codex): a symlinked .md page resolving OUTSIDE the wiki must
+    not be read — its frontmatter must never leak into the status card."""
+    import api.routes as routes
+
+    outside = tmp_path / "outside"
+    outside.mkdir(parents=True, exist_ok=True)
+    secret = outside / "private.md"
+    secret.write_text("---\nauthor: outside-secret\n---\nprivate body\n", encoding="utf-8")
+
+    wiki = tmp_path / "wiki" / "entities"
+    wiki.mkdir(parents=True, exist_ok=True)
+    link = wiki / "linked.md"
+    try:
+        link.symlink_to(secret)
+    except (OSError, NotImplementedError):
+        import pytest
+        pytest.skip("symlinks not supported on this platform")
+
+    wiki_root = tmp_path / "wiki"
+    pages = routes._llm_wiki_page_files(wiki_root)
+    writer = routes._llm_wiki_last_writer(wiki_root, pages)
+    # The external symlink's frontmatter must NOT surface; falls back to ai-agent.
+    assert writer != "outside-secret"
+    assert "outside-secret" not in writer

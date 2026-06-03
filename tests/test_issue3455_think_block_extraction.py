@@ -85,13 +85,25 @@ def test_think_at_start_extracted(driver):
     assert r["reasoning"] == "my reasoning"
 
 
-def test_content_before_think_is_preserved(driver):
-    """Data-loss guard: real content before a think block must survive."""
+def test_content_before_think_is_not_extracted(driver):
+    """Renderer-matching: a think block is only extracted at the LEADING position.
+    A <think> that appears after real prose is, by the renderer's definition,
+    visible content and must be left in m.content (not moved to reasoning)."""
     r = _split(driver, "Real prefix <think>mid</think> tail")
-    assert "Real prefix" in r["content"]
-    assert "tail" in r["content"]
-    assert "<think>" not in r["content"]
-    assert r["reasoning"] == "mid"
+    # Not leading -> nothing extracted, content fully preserved.
+    assert r["content"] == "Real prefix <think>mid</think> tail"
+    assert r["reasoning"] == ""
+
+
+def test_closed_literal_think_in_code_block_preserved(driver):
+    """#3455 review (Codex data-loss): a closed literal <think>...</think> inside
+    a fenced code block (visible content, not leading) must NOT be extracted into
+    reasoning — the whole-body scan that did this is removed."""
+    raw = "```html\n<think>visible literal</think>\n```"
+    r = _split(driver, raw)
+    assert r["content"] == raw, "fenced-code closed think tag must stay in content"
+    assert r["reasoning"] == ""
+    assert "visible literal" in r["content"]
 
 
 def test_unclosed_think_left_intact(driver):
@@ -108,10 +120,20 @@ def test_existing_reasoning_is_merged_not_overwritten(driver):
     assert r["reasoning"] == "from on_reasoning stream\n\nextra"
 
 
-def test_multiple_blocks_all_extracted(driver):
-    r = _split(driver, "<think>a</think>mid<think>b</think>end")
-    assert r["content"] == "midend"
+def test_consecutive_leading_blocks_all_extracted(driver):
+    """Consecutive LEADING think blocks (back-to-back at the start) are all
+    captured by the repeating loop; a block after real content is not."""
+    r = _split(driver, "<think>a</think><think>b</think>the answer")
+    assert r["content"] == "the answer"
     assert r["reasoning"] == "a\n\nb"
+
+
+def test_block_after_content_not_extracted(driver):
+    """A think block that follows visible content stays in content (renderer only
+    strips leading blocks)."""
+    r = _split(driver, "<think>lead</think>answer <think>trailing</think> more")
+    assert r["content"] == "answer <think>trailing</think> more"
+    assert r["reasoning"] == "lead"
 
 
 def test_lookalike_tag_in_code_not_extracted(driver):

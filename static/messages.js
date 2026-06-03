@@ -849,42 +849,27 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
     let extracted='';
     let remaining=text;
     let changed=true;
+    // Only extract think blocks at the LEADING position (after lstrip), matching
+    // the streaming renderer's _streamDisplay/_parseStreamState semantics exactly.
+    // A closed <think>...</think> that appears MID-BODY is, by the renderer's own
+    // definition, visible content (e.g. a literal tag inside a fenced code block) —
+    // a whole-body scan would silently move that visible text into m.reasoning and
+    // empty the code block (#3455 review, Codex). The loop repeats so consecutive
+    // leading blocks are still all captured.
     for(let safety=0; changed && safety<16; safety++){
       changed=false;
-      // Pass 1: try to extract a think block at the start (after lstrip),
-      // matching the streaming renderer's _parseStreamState semantics.
       const trimmed=remaining.trimStart();
       const relOffset=remaining.length-trimmed.length;
       for(const {open,close} of _thinkPairs){
         if(!trimmed.startsWith(open)) continue;
         const ci=trimmed.indexOf(close,open.length);
-        if(ci===-1) continue; // partial open — try the next pair
+        if(ci===-1) continue; // partial open — leave intact for the live renderer
         const block=trimmed.slice(open.length,ci);
         extracted=extracted?extracted+'\n\n'+block:block;
-        // Drop leading whitespace if the think block was the very first thing;
-        // otherwise the prefix was real content before the think and stays.
-        const prefix=relOffset>0?remaining.slice(0,relOffset):'';
-        const leadingDecoration=prefix.trim()==='';
-        remaining=(leadingDecoration?'':prefix)+trimmed.slice(ci+close.length).replace(/^\s+/,'');
+        // The leading run is reasoning; everything after the close is content.
+        remaining=trimmed.slice(ci+close.length).replace(/^\s+/,'');
         changed=true;
         break;
-      }
-      if(changed) continue;
-      // Pass 2: scan the rest of the body for any remaining complete think block.
-      // Picks the earliest match across all known pairs.
-      let bestStart=Infinity, bestPair=null, bestEnd=-1;
-      for(const {open,close} of _thinkPairs){
-        const si=remaining.indexOf(open);
-        if(si===-1) continue;
-        const ei=remaining.indexOf(close, si+open.length);
-        if(ei===-1) continue;
-        if(si<bestStart){bestStart=si; bestPair={open,close}; bestEnd=ei;}
-      }
-      if(bestPair){
-        const block=remaining.slice(bestStart+bestPair.open.length, bestEnd);
-        extracted=extracted?extracted+'\n\n'+block:block;
-        remaining=remaining.slice(0,bestStart)+remaining.slice(bestEnd+bestPair.close.length);
-        changed=true;
       }
     }
     if(!extracted) return {reasoning:existingReasoning||'', content:rawContent};

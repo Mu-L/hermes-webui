@@ -3512,10 +3512,27 @@ def _llm_wiki_last_writer(wiki_path: Path, page_files: list[Path]) -> str:
       3. Static fallback ``"ai-agent"`` so the UI never shows "Not available"
          for a configured wiki.
     """
-    # Priority 1: most recent page frontmatter
+    # #3455 review (Codex): resolve the wiki root once and require every file we
+    # read to stay under it, so a symlinked .md page can't leak frontmatter from
+    # outside the wiki. Also read bounded line-by-line (frontmatter only / log
+    # headings only), never full page bodies, per the private-safe status contract.
+    try:
+        wiki_root = wiki_path.resolve()
+    except Exception:
+        wiki_root = wiki_path
+
+    def _within_wiki(p: Path) -> bool:
+        try:
+            return p.resolve().is_relative_to(wiki_root)
+        except Exception:
+            return False
+
+    # Priority 1: most recent page frontmatter (resolved-path must stay in-wiki)
     latest_page: Path | None = None
     latest_mtime = -1.0
     for candidate in page_files:
+        if not _within_wiki(candidate):
+            continue  # skip symlinks resolving outside the wiki
         try:
             mtime = candidate.stat().st_mtime
         except Exception:
@@ -3525,34 +3542,39 @@ def _llm_wiki_last_writer(wiki_path: Path, page_files: list[Path]) -> str:
             latest_page = candidate
     if latest_page is not None:
         try:
-            content = latest_page.read_text(encoding="utf-8", errors="replace")
+            with open(latest_page, encoding="utf-8", errors="replace") as fh:
+                first = fh.readline()
+                if first.strip() == "---":
+                    # Read only the frontmatter block, bounded to a small line cap.
+                    for _ in range(200):
+                        line = fh.readline()
+                        if line == "" or line.strip() == "---":
+                            break  # EOF or end of frontmatter — never touch the body
+                        stripped = line.strip()
+                        lower = stripped.lower()
+                        for key in ("updated_by", "writer", "author"):
+                            if lower.startswith(f"{key}:"):
+                                value = stripped.split(":", 1)[1].strip()
+                                if value:
+                                    return value
         except Exception:
-            content = ""
-        if content.startswith("---"):
-            end = content.find("---", 3)
-            if end > 0:
-                for line in content[3:end].splitlines():
-                    stripped = line.strip()
-                    lower = stripped.lower()
-                    for key in ("updated_by", "writer", "author"):
-                        if lower.startswith(f"{key}:"):
-                            value = stripped.split(":", 1)[1].strip()
-                            if value:
-                                return value
+            pass
 
-    # Priority 2: log.md last entry action verb
+    # Priority 2: log.md last entry action verb (heading lines only, bounded)
     log_path = wiki_path / "log.md"
-    if log_path.exists() and log_path.is_file():
+    if _within_wiki(log_path) and log_path.is_file():
         try:
-            for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
-                stripped = line.strip()
-                if not stripped.startswith("## ["):
-                    continue
-                if "|" not in stripped:
-                    continue
-                tail = stripped.split("]", 1)[1].strip() if "]" in stripped else ""
-                action = tail.split()[0] if tail else "update"
-                return f"ai-agent ({action})"
+            with open(log_path, encoding="utf-8", errors="replace") as fh:
+                for _ in range(5000):  # cap the heading scan
+                    line = fh.readline()
+                    if line == "":
+                        break
+                    stripped = line.strip()
+                    if not stripped.startswith("## [") or "|" not in stripped:
+                        continue
+                    tail = stripped.split("]", 1)[1].strip() if "]" in stripped else ""
+                    action = tail.split()[0] if tail else "update"
+                    return f"ai-agent ({action})"
         except Exception:
             pass
 
