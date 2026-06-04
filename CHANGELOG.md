@@ -3,6 +3,14 @@
 
 ## [Unreleased]
 
+## [v0.51.252] — 2026-06-03 — Release HT (stage-q24 — selection-bleed fix + compatibility docs)
+
+### Fixed
+- The floating "selected-text reply" button no longer lets its own label get caught in a text selection (`user-select:none`), so dragging a selection near the button doesn't bleed into it. (#2481, @rodboev)
+
+### Docs
+- README now has a **Compatibility** section documenting that the WebUI is tested against the matching hermes-agent release and that both should be upgraded together (until the stable agent API #2491 lands). (@rodboev)
+
 ## [v0.51.251] — 2026-06-03 — Release HS (stage-q23 — composer ~/ path autocomplete)
 
 ### Fixed
