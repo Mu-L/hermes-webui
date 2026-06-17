@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [v0.51.473] — 2026-06-17 — Release QH (clean cancelled user context chains)
+
+### Fixed
+
+- **A cancelled or interrupted correction turn no longer reappears as a stale prefix on later messages (#4341).** WebUI keeps a visible transcript and a model-facing `context_messages` layer; when a correction turn was cancelled/interrupted, the agent's role-alternation repair could merge the stale user text into a later clean turn as `<stale>\n\n<current>`, contaminating model-facing context (and sometimes the visible transcript). Building on the one-hop cleanup in #4089, the WebUI merge/writeback boundary now also recognizes multi-hop repaired chains and replayed stale prefixes from older polluted rows, normalizing only the current-turn row back to exactly what the user submitted. The fix is anchored on a strict invariant — the repair suffix must normalize to the *entire* submitted turn — so multi-paragraph prompts, shared-prefix messages, and repeated identical turns are never mistaken for stale chains, and already-committed historical context rows are left intact. Thanks @starship-s.
+
 ## [v0.51.472] — 2026-06-17 — Release QG (paste image + text together)
 
 ### Fixed
