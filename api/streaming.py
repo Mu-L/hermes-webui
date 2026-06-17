@@ -4063,6 +4063,15 @@ def _stale_prefix_matches_prior_user_context(stale_prefix, stale_segments, previ
         # rows after newer clean turns have advanced the context tail. In that
         # shape the stale paragraphs are still all prior user content, but they
         # are substrings within older merged rows rather than standalone rows.
+        #
+        # NOTE: this substring match is intentionally loose (a stale segment can
+        # coincidentally appear inside an unrelated prior row). Correctness does
+        # NOT depend on it being precise — the caller (_detect_stale_user_merge)
+        # only reaches here once the row's suffix already normalizes to the
+        # ENTIRE submitted turn, so anything this branch flags has a prefix that
+        # is extra-to-the-submission. Cleaning therefore only ever rewrites the
+        # row to the user's actual current turn; it can never drop legitimate
+        # current-turn content even on a coincidental substring hit.
         row_index = 0
         row_offset = 0
         matched_all_segments = True
