@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [v0.51.477] — 2026-06-17 — Release QL (gateway runs-API routing now opt-in)
+
+### Fixed
+
+- **Gateway chat no longer silently loses mid-conversation context (#4362).** When the WebUI was connected to a Hermes gateway that advertised approval/runs support, it routed *every* browser chat turn through the gateway's `/v1/runs` API, which creates an isolated Api_Server session per turn — so the agent lost the conversation's context between messages. Routing through the runs API is now gated behind an explicit opt-in (`HERMES_WEBUI_GATEWAY_USE_RUNS_API=1` env var, or `webui_gateway_use_runs_api: true` in config), defaulting to off. Normal gateway chat now stays on `/v1/chat/completions`, which preserves the session via `X-Hermes-Session-Id`. Operators who want the in-gateway-chat approval-events flow can re-enable it with the flag. Thanks @rodboev.
+
 ## [v0.51.476] — 2026-06-17 — Release QK (cross-provider model-pick + non-git update-status fixes)
 
 ### Fixed
