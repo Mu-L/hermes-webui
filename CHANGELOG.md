@@ -3,6 +3,10 @@
 
 ## [Unreleased]
 
+### Security
+
+- **Rollback checkpoint diffs no longer follow checkpoint or workspace symlinks when rendering file contents.** The diff path previously read tracked checkpoint files and workspace files through pathname APIs, so a symlink entry could redirect the rendered diff to a readable file outside the checkpoint/workspace boundary. Diff reads now reject non-regular checkpoint entries and use the workspace's anchored file reader for workspace-side content; restore also skips symlink checkpoint sources.
+
 ## [v0.51.489] — 2026-06-18 — Release QY (outline button no longer collides with the scroll control)
 
 ### Fixed

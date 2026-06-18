@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -94,6 +95,64 @@ def _resolve_workspace(workspace: str) -> str:
 def _find_git() -> str:
     """Return the path to the git binary."""
     return shutil.which("git") or "git"
+
+
+def _checkpoint_entry_mode(git: str, ckpt_dir: Path, rel_path: str) -> int | None:
+    """Return the git index mode for a tracked checkpoint path."""
+    result = subprocess.run(
+        [git, "-C", str(ckpt_dir), "ls-files", "-s", "--", rel_path],
+        capture_output=True, text=True, timeout=10,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    first = result.stdout.splitlines()[0].split(maxsplit=1)[0]
+    try:
+        return int(first, 8)
+    except ValueError:
+        return None
+
+
+def _checkpoint_entry_is_regular(git: str, ckpt_dir: Path, rel_path: str) -> bool:
+    """Return True only for regular tracked checkpoint files.
+
+    Checkpoint worktrees can contain tracked symlinks. Pathname reads such as
+    Path.is_file()/read_text() follow those symlinks and can disclose host files
+    outside the checkpoint/workspace root in rollback diffs. Use the git index
+    mode as the source of truth and refuse symlink/special entries before any
+    filesystem open.
+    """
+    mode = _checkpoint_entry_mode(git, ckpt_dir, rel_path)
+    return mode is not None and stat.S_ISREG(mode)
+
+
+def _read_checkpoint_text(git: str, ckpt_dir: Path, rel_path: str) -> str | None:
+    """Read a regular tracked checkpoint file without following worktree links."""
+    if not _checkpoint_entry_is_regular(git, ckpt_dir, rel_path):
+        return None
+    result = subprocess.run(
+        [git, "-C", str(ckpt_dir), "show", f"HEAD:{rel_path}"],
+        capture_output=True, text=True, errors="replace", timeout=10,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _read_workspace_text(workspace_root: Path, rel_path: str) -> str | None:
+    """Read workspace text through the anchored workspace file API.
+
+    The normal workspace helpers reject traversal and symlink escapes. Returning
+    an empty string for invalid/unreadable files keeps the diff useful without
+    echoing bytes from an escaping symlink target.
+    """
+    from api.workspace import read_file_content
+
+    try:
+        return read_file_content(workspace_root, rel_path)["content"]
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return ""
 
 
 # ── Public API functions (called from routes.py) ────────────────────────────
@@ -211,26 +270,15 @@ def get_checkpoint_diff(workspace: str, checkpoint: str) -> dict[str, Any]:
     diff_lines = []
 
     for rel_path in ckpt_files:
-        ckpt_file = ckpt_dir / rel_path
-        ws_file = Path(resolved) / rel_path
-
-        if not ckpt_file.is_file():
-            continue
-
-        # Read checkpoint version
-        try:
-            ckpt_content = ckpt_file.read_text(errors="replace")
-        except OSError:
+        # Read checkpoint version from the git object database, not via the
+        # checkout path. This prevents tracked symlinks in the checkpoint from
+        # redirecting diff reads to arbitrary host files.
+        ckpt_content = _read_checkpoint_text(git, ckpt_dir, rel_path)
+        if ckpt_content is None:
             continue
 
         # Read workspace version (if exists)
-        if ws_file.is_file():
-            try:
-                ws_content = ws_file.read_text(errors="replace")
-            except OSError:
-                ws_content = ""
-        else:
-            ws_content = None  # File was deleted in workspace
+        ws_content = _read_workspace_text(Path(resolved), rel_path)
 
         if ws_content is None:
             # File exists in checkpoint but not in workspace (deleted)
@@ -323,7 +371,7 @@ def restore_checkpoint(workspace: str, checkpoint: str) -> dict[str, Any]:
     for rel_path in ckpt_files:
         ckpt_file = ckpt_dir / rel_path
 
-        if not ckpt_file.is_file():
+        if not _checkpoint_entry_is_regular(git, ckpt_dir, rel_path):
             continue
 
         try:
