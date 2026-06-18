@@ -3,11 +3,11 @@
 
 ## [Unreleased]
 
-## [v0.51.502] — 2026-06-18 — Release RL (CLI-session visibility toggle invalidates the sidebar cache)
+## [v0.51.502] — 2026-06-18 — Release RL (CLI/gateway sessions appear immediately; sidebar-cache invalidation hardened)
 
 ### Fixed
 
-- **Toggling "show CLI/messaging sessions" now takes effect immediately instead of after a brief delay.** `POST /api/settings` did not invalidate the session-list cache, which is keyed partly on the visibility setting and otherwise only revalidated by the settings-file mtime stamp. When a visibility toggle wrote the settings file within the same mtime granularity as a cached entry (and resolved to the default-valued cache key), the sidebar could keep serving the stale session set for up to the cache TTL (~2.5s). The settings handler now clears the session-list cache directly whenever `show_cli_sessions` / `show_cron_sessions` change. This was also the root cause of an intermittent `test_gateway_sync` CI flake (a freshly-inserted CLI/gateway session occasionally absent from `/api/sessions` right after the visibility toggle).
+- **A newly created CLI / gateway / messaging session now appears in the sidebar immediately instead of after a delay of up to ~5 seconds.** The CLI-session cache (`_CLI_SESSIONS_CACHE`, 5s TTL) and the session-list cache were keyed for invalidation on a file-stat stamp `(st_mtime_ns, st_size)` of `state.db` and its `-wal`/`-shm` sidecars. In WAL mode a commit lands in the `-wal` file, and under fast writes those stat stamps can collide with a previously cached entry (same mtime-nanosecond bucket plus a WAL frame at the same size after a prior checkpoint), so a freshly-committed session was intermittently served from the stale cache. The cache key now includes a commit-reliable content fingerprint of the `sessions`/`messages` tables, which advances on every commit (including external gateway writes) and is immune to mtime granularity. `POST /api/settings` also now invalidates the session-list cache directly when a session-visibility setting (`show_cli_sessions` / `show_cron_sessions` / `show_previous_messaging_sessions`) changes, rather than relying on the settings-file mtime stamp. This was also the root cause of the long-recurring `test_gateway_sync` CI flake.
 
 ## [v0.51.501] — 2026-06-18 — Release RK (Ctrl/Cmd+, opens Settings)
 

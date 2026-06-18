@@ -3780,9 +3780,56 @@ def _path_stat_cache_key(path):
         return None
 
 
+def _sqlite_content_fingerprint(db_path: Path):
+    """Return a commit-reliable content fingerprint for a state.db.
+
+    The stat-only key below (mtime_ns + size of the .db/-wal/-shm files) is NOT
+    reliable for cache invalidation: in WAL mode a commit lands in the -wal file,
+    and under fast sequential writes the (mtime_ns, size) of the sidecars can
+    COLLIDE with a previously cached stamp (same nanosecond bucket + a WAL frame
+    that lands at the same offset/size after a prior checkpoint truncation), so a
+    freshly-committed gateway/CLI session is intermittently served from the stale
+    Python cache. PRAGMA data_version does NOT help here either — read from a
+    fresh per-request connection it always reports that connection's own initial
+    value and never advances (verified). A cheap content fingerprint over the
+    sessions/messages tables, read on a fresh connection, DOES advance on every
+    commit (incl. external gateway writes) and is immune to mtime granularity.
+    Cost is a pair of indexed COUNT/MAX queries (sub-ms), far cheaper than the
+    full uncached session scan this key gates.
+    """
+    try:
+        if not Path(db_path).exists():
+            return None
+    except OSError:
+        return None
+    try:
+        import sqlite3
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            parts = []
+            for table in ("sessions", "messages"):
+                try:
+                    row = conn.execute(
+                        f"SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM {table}"
+                    ).fetchone()
+                    parts.append((row[0], row[1]))
+                except Exception:
+                    # Table may not exist yet on a fresh/partial db — treat as empty.
+                    parts.append((0, 0))
+            return tuple(parts)
+    except Exception:
+        return None
+
+
 def _sqlite_file_stat_cache_key(db_path: Path):
-    """Return a cheap invalidation key for a SQLite DB and WAL sidecars."""
+    """Return a commit-reliable invalidation key for a SQLite DB.
+
+    Combines a content fingerprint (the authoritative signal — advances on every
+    commit, immune to mtime-granularity collisions that flaked the gateway_sync
+    test) with the cheap file stat stamps as a belt-and-suspenders fallback for
+    the case where the fingerprint can't be read.
+    """
     return (
+        _sqlite_content_fingerprint(db_path),
         _path_stat_cache_key(db_path),
         _path_stat_cache_key(Path(f"{db_path}-wal")),
         _path_stat_cache_key(Path(f"{db_path}-shm")),
