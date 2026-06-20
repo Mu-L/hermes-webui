@@ -3,13 +3,13 @@
 
 ## [Unreleased]
 
-## [v0.51.536] — 2026-06-20 — Release SU (transparent-stream tool-call rows persist after settle)
+## [v0.51.537] — 2026-06-20 — Release SV (queued card clears on session switch)
 
 ### Fixed
 
-- **Transparent-stream tool-call rows no longer vanish on turn settle (#4539).** The settled-node cleanup sweep in `renderMessages` was removing `.tool-card-row` elements regardless of type; it now excludes rows with `data-event-type="tool"` (the transparent-stream rows) so they survive settlement. The burst-key assignment also pre-scans burst IDs into a `Set` before the tool-card loop (O(1) lookup instead of O(n) spread per card), and only uses a burst key when the matching assistant segment is present. Thanks @rodboev.
+- **The queued-turn card from one session no longer bleeds into another when switching sessions (#4533).** The card-clear logic was only called for the *active* session's drain; session switch had no explicit clear, so a queued card from session A could persist visually when loading session B. `_clearQueueCardDisplay` is now called during `loadSession` on the session being left. Thanks @rodboev.
 
-## [v0.51.535] — 2026-06-20 — Release ST (open model picker stays stable during stream sync)
+## [v0.51.536] — 2026-06-20 — Release SU (transparent-stream tool-call rows persist after settle)
 
 ### Fixed
 

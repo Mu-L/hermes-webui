@@ -5414,6 +5414,29 @@ function setBusy(v){
 // normal user bubble in the chat — the chip is removed at drain time.
 const _queueRenderKeys={};  // per-session fingerprint to avoid redundant rebuilds
 const _queueCollapsed={};   // per-session: true when user explicitly collapsed the card
+let _queueRenderEpoch=0;
+function _clearQueueCardDisplay(sid){
+  const card=document.getElementById('queueCard');
+  const chips=document.getElementById('queueChips');
+  if(sid) delete _queueRenderKeys[sid];
+  if(card) card.classList.remove('visible');
+  if(chips){
+    const _chips=chips;
+    const _card=card;
+    const _sid=String(sid||'');
+    const _epoch=_chips.getAttribute('data-queue-render-epoch')||'';
+    setTimeout(()=>{
+      if((_card&&!_card.classList.contains('visible'))||!_card){
+        if((_chips.getAttribute('data-queue-render-sid')||'')===_sid&&(_chips.getAttribute('data-queue-render-epoch')||'')===_epoch){
+          _chips.innerHTML='';
+        }
+      }
+    },360);
+  }
+  const _msgsEl=document.getElementById('messages');
+  if(_msgsEl) _msgsEl.classList.remove('queue-open');
+  _updateQueuePill(sid,0);
+}
 
 function _renderQueueChips(sid){
   const card=document.getElementById('queueCard');
@@ -5425,6 +5448,8 @@ function _renderQueueChips(sid){
   // Skip re-render if user is actively editing inside the queue panel
   if(inner.contains(document.activeElement)&&document.activeElement!==inner) return;
   _queueRenderKeys[sid]=key;
+  inner.setAttribute('data-queue-render-sid',sid);
+  inner.setAttribute('data-queue-render-epoch',String(++_queueRenderEpoch));
   inner.innerHTML='';
   if(!q.length){
     card.classList.remove('visible');
@@ -5663,14 +5688,7 @@ function updateQueueBadge(sessionId){
     // Only wipe global DOM if this is the currently active session
     const isActive=S.session&&sid===S.session.session_id;
     if(isActive){
-      const card=document.getElementById('queueCard');
-      const chips=document.getElementById('queueChips');
-      if(card) card.classList.remove('visible');
-      // Defer clear until after slide-out transition so content doesn't vanish mid-animation
-      if(chips){const _chips=chips;const _card=card;setTimeout(()=>{if(!_card||!_card.classList.contains('visible'))_chips.innerHTML='';},360);}
-      const _msgsEl=document.getElementById('messages');
-      if(_msgsEl) _msgsEl.classList.remove('queue-open');
-      _updateQueuePill(sid,0);
+      _clearQueueCardDisplay(sid);
     }
   }
 }
