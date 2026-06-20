@@ -854,6 +854,70 @@ def test_gateway_use_runs_api_env_wins_over_config():
     ) is False
 
 
+def test_gateway_runs_api_body_includes_session_id():
+    """#4535: the runs API body must carry session_id so the agent reuses the
+    browser session instead of creating a fresh run_<uuid> per message."""
+    from unittest.mock import patch, MagicMock
+    from api.config import STREAMS, STREAMS_LOCK
+    from api.gateway_chat import _run_gateway_chat_streaming
+
+    captured = {}
+    events = []
+    q = MagicMock()
+    q.put_nowait = lambda item: events.append(item)
+    stream_id = "sid-runs-session-id"
+    with STREAMS_LOCK:
+        STREAMS[stream_id] = q
+
+    call_count = [0]
+
+    def fake_urlopen(req, *, timeout=None):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            captured["url"] = req.full_url
+            resp = MagicMock()
+            resp.read = lambda sz=65536: json.dumps({"run_id": "run_abc"}).encode()
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = lambda s, *a: None
+            return resp
+        resp = MagicMock()
+        resp.__iter__ = lambda s: iter([
+            b'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
+            b'data: [DONE]\n',
+        ])
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = lambda s, *a: None
+        return resp
+
+    import os
+    env = {k: v for k, v in os.environ.items()}
+    env["HERMES_WEBUI_CHAT_BACKEND"] = "gateway"
+    env["HERMES_WEBUI_GATEWAY_USE_RUNS_API"] = "1"
+    env["HERMES_WEBUI_GATEWAY_BASE_URL"] = "http://gateway.local"
+
+    try:
+        with patch.dict("os.environ", env, clear=True):
+            with patch("api.gateway_chat.gateway_supports_approval", return_value=True), \
+                 patch("urllib.request.urlopen", side_effect=fake_urlopen), \
+                 patch("api.gateway_chat.get_session", return_value=MagicMock(
+                     active_stream_id=stream_id, workspace="/tmp",
+                     profile=None, context_messages=[], messages=[],
+                 )):
+                _run_gateway_chat_streaming(
+                    session_id="sess-stable-uuid",
+                    msg_text="hi",
+                    model="test",
+                    workspace="/tmp",
+                    stream_id=stream_id,
+                )
+        assert "/v1/runs" in captured["url"]
+        assert captured["body"]["session_id"] == "sess-stable-uuid"
+    finally:
+        with STREAMS_LOCK:
+            STREAMS.pop(stream_id, None)
+
+
 def test_gateway_worker_skips_runs_api_when_opt_in_absent():
     """Worker uses chat/completions even when gateway advertises approval support, unless opt-in is set."""
     from unittest.mock import patch, MagicMock

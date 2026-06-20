@@ -3,6 +3,13 @@
 
 ## [Unreleased]
 
+## [v0.51.539] — 2026-06-20 — Release SX (gateway session continuity + local slash-model routing)
+
+### Fixed
+
+- **The gateway Runs API no longer spawns a fresh session for every message (#4535).** The `/v1/runs` request body omitted `session_id`, so each turn created a new `run_<uuid>` session instead of reusing the stable WebUI session — flooding the sidebar with duplicate `Api_Server` sessions and breaking conversation continuity. The body now carries `session_id`. Thanks @rodboev.
+- **HuggingFace-style slash model IDs now route to the configured local provider instead of the default backend.** A selected local model such as `unsloth/gemma-4-12b-it-GGUF:UD-Q4_K_XL` was being sent to the default provider (e.g. `openai-codex`) because the slash in the ID suppressed provider qualification. When the selected provider is explicitly configured in `config.yaml` (llama.cpp, Ollama, LM Studio, vLLM, or any OpenAI-compatible endpoint), the model ID is now qualified as `@provider:model` so it reaches the right backend; OpenRouter and removed-provider slow paths are preserved. Thanks @MinhoJJang.
+
 ## [v0.51.538] — 2026-06-20 — Release SW (gateway approval cards work on the default legacy path)
 
 ### Fixed

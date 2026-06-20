@@ -300,6 +300,7 @@ def test_gateway_runs_api_streaming_parses_real_run_events():
     assert run_body["instructions"] == "system prompt"
     assert run_body["conversation_history"] == [{"role": "assistant", "content": "earlier reply"}]
     assert run_body["provider"] == "anthropic"
+    assert run_body["session_id"] == "sess1"
     assert "messages" not in run_body
 
     assert final_text == "Hello"

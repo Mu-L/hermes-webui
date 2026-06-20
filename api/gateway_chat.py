@@ -313,6 +313,7 @@ def _run_gateway_runs_api_streaming(
         "model": model or "default",
         "input": run_input,
         **body_extras,
+        "session_id": session_id,
     }
     if instructions_parts:
         run_body["instructions"] = "\n\n".join(part for part in instructions_parts if part)
