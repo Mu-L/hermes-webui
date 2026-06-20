@@ -918,6 +918,7 @@ _FALLBACK_MODELS = [
     {"provider": "MiniMax",   "id": "minimax/MiniMax-M2.7",             "label": "MiniMax M2.7"},
     {"provider": "MiniMax",   "id": "minimax/MiniMax-M2.7-highspeed",   "label": "MiniMax M2.7 Highspeed"},
     # Z.AI / GLM
+    {"provider": "Z.AI",      "id": "zai/glm-5.2",                      "label": "GLM-5.2"},
     {"provider": "Z.AI",      "id": "zai/glm-5.1",                      "label": "GLM-5.1"},
     {"provider": "Z.AI",      "id": "zai/glm-5",                        "label": "GLM-5"},
     {"provider": "Z.AI",      "id": "zai/glm-5-turbo",                  "label": "GLM-5 Turbo"},
@@ -1427,6 +1428,7 @@ _PROVIDER_MODELS = {
         {"id": "@nous:google/gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview (via Nous)"},
     ],
     "zai": [
+        {"id": "glm-5.2", "label": "GLM-5.2"},
         {"id": "glm-5.1", "label": "GLM-5.1"},
         {"id": "glm-5", "label": "GLM-5"},
         {"id": "glm-5-turbo", "label": "GLM-5 Turbo"},
@@ -1577,6 +1579,100 @@ _PROVIDER_MODELS = {
         {"id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",  "label": "Global Anthropic Claude Haiku 4.5"},
     ],
 }
+
+
+def _seed_provider_models_from_core() -> None:
+    """Enrich existing provider model lists with missing IDs from hermes_cli.
+
+    The core's _PROVIDER_MODELS is the authoritative curated list of agent-capable
+    models per provider.  The WebUI's static dict above is a display-oriented copy
+    (with {id, label} entries) that can go stale when new models are added to the
+    core without a matching WebUI update.  This function bridges the gap by
+    injecting any missing model IDs from the core into **existing** WebUI provider
+    entries.
+
+    Constrains seeding to providers already in the WebUI catalog — does NOT add
+    brand-new providers.  Adding new vendors is a maintainer curation decision.
+    Respects per-provider ID conventions (e.g. nous uses @nous:-prefixed IDs).
+
+    Safe to call multiple times; only missing entries are added.  Silently no-ops
+    if hermes_cli is not importable (standalone WebUI deployments).
+
+    Must be called AFTER ``_get_label_for_model`` is defined (module-level
+    invocation is at the bottom of this module, not here).
+    """
+    try:
+        from hermes_cli.models import _PROVIDER_MODELS as _core_pm
+    except ImportError:
+        return
+
+    # Build a canonical-id → WebUI-key lookup so that providers whose canonical
+    # form differs between core and WebUI (e.g. core uses "xai" but WebUI
+    # indexes by "x-ai") merge into the existing entry instead of creating a
+    # duplicate (#4413).
+    _webui_key_by_canonical: dict[str, str] = {}
+    for _wk in _PROVIDER_MODELS:
+        try:
+            _canon = _resolve_provider_alias(_wk)
+        except Exception:
+            _canon = _wk
+        if _canon not in _webui_key_by_canonical:
+            _webui_key_by_canonical[_canon] = _wk
+
+    for provider_id, core_models in _core_pm.items():
+        if not isinstance(core_models, list):
+            continue
+
+        # Resolve the core's provider_id to the WebUI's key for this provider.
+        webui_key = provider_id
+        webui_list = _PROVIDER_MODELS.get(provider_id)
+        if webui_list is None:
+            try:
+                _canon_pid = _resolve_provider_alias(provider_id)
+            except Exception:
+                _canon_pid = provider_id
+            webui_key = _webui_key_by_canonical.get(_canon_pid, provider_id)
+            webui_list = _PROVIDER_MODELS.get(webui_key)
+
+        if webui_list is None:
+            # Provider exists in core but not in the WebUI catalog.
+            # Do NOT seed — adding new vendors is a maintainer curation
+            # decision, not something the seeder should do implicitly (#4413).
+            continue
+        if not isinstance(webui_list, list):
+            continue
+        # Provider exists in both — inject missing model IDs.
+        # Detect per-provider ID prefix convention (e.g. nous uses @nous:).
+        # The merge must respect each provider's existing ID format rather
+        # than injecting the core's raw IDs (#4413).
+        _existing_ids_raw: list[str] = [
+            (m.get("id") if isinstance(m, dict) else str(m)) or ""
+            for m in webui_list
+            if isinstance(m, dict) and m.get("id")
+        ]
+        _prefix = ""
+        if _existing_ids_raw and all(i.startswith("@") and ":" in i for i in _existing_ids_raw):
+            _prefix = _existing_ids_raw[0].split(":", 1)[0] + ":"
+
+        def _strip_prefix(mid: str, prefix: str = _prefix) -> str:
+            if prefix and mid.startswith(prefix):
+                return mid[len(prefix):]
+            return mid
+
+        existing_ids = {
+            _strip_prefix(mid).replace("-", ".").lower()
+            for mid in _existing_ids_raw
+        }
+        for mid in core_models:
+            if not isinstance(mid, str) or not mid.strip():
+                continue
+            normed = mid.strip().replace("-", ".").lower()
+            if normed not in existing_ids:
+                inject_id = (_prefix + mid.strip()) if _prefix else mid.strip()
+                webui_list.append({
+                    "id": inject_id,
+                    "label": _get_label_for_model(mid.strip(), []),
+                })
 
 
 _AMBIENT_GH_CLI_MARKERS = frozenset({"gh_cli", "gh auth token"})
@@ -7434,3 +7530,16 @@ try:
     init_profile_state()
 except ImportError:
     pass  # hermes_cli not available -- default profile only
+
+
+# Run the provider-model seeder once at import time. Must be at the END of the
+# module because _seed_provider_models_from_core() calls _get_label_for_model,
+# which is defined ~3000 lines above. Placing the invocation earlier (e.g. right
+# after the seeder's def) caused a NameError that the bare except silently
+# swallowed — exactly when the seeder had real work to do (#4413).
+try:
+    _seed_provider_models_from_core()
+except ImportError:
+    pass  # hermes_cli not available (standalone deployment)
+except Exception:
+    logger.warning("provider-model seeder failed", exc_info=True)
