@@ -663,6 +663,28 @@ def _run_gateway_chat_streaming(
                         payload = json.loads(data)
                     except json.JSONDecodeError:
                         continue
+                    _payload_event = str(payload.get("event") or payload.get("type") or sse_event).strip()
+                    if _payload_event in {"hermes.approval.request", "approval.request"}:
+                        approval_data = _gateway_runs_approval_event(payload)
+                        if approval_data:
+                            # Record the gateway run_id so /api/approval/respond
+                            # can relay the choice back and resume the parked run
+                            # (legacy path never creates a local run; without this
+                            # the card renders but approve/deny returns ok:false).
+                            # No-op when the payload omits run_id.
+                            _approval_run_id = str(approval_data.get("run_id") or "").strip()
+                            if _approval_run_id:
+                                _STREAM_RUN_IDS[stream_id] = _approval_run_id
+                            put_gateway_event("approval", approval_data)
+                            try:
+                                from api.route_approvals import submit_gateway_pending_mirror
+                                submit_gateway_pending_mirror(session_id, approval_data)
+                            except Exception:
+                                logger.debug("submit_gateway_pending_mirror failed", exc_info=True)
+                        else:
+                            logger.debug("Ignoring malformed gateway approval payload")
+                        sse_event = "message"
+                        continue
                     if sse_event == "hermes.tool.progress":
                         translated = _gateway_tool_progress_event(payload)
                         if translated:

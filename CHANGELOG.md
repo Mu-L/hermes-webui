@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [v0.51.538] — 2026-06-20 — Release SW (gateway approval cards work on the default legacy path)
+
+### Fixed
+
+- **Approval-gated tools no longer hang forever on standard gateway deployments (#4549).** Gateway deployments that don't set `HERMES_WEBUI_GATEWAY_USE_RUNS_API` (the default, legacy `/v1/chat/completions` path) silently dropped `approval.request` / `hermes.approval.request` events in the SSE relay loop — the agent said "please approve in the UI" but the approval card never rendered and the run hung at "Thinking…" until timeout. #4495 had fixed the runs-API path but left the legacy path untouched. The legacy SSE loop now handles approval events (reusing `_gateway_runs_approval_event` and the polling-state mirror), and records the gateway `run_id` so the user's approve/deny choice relays back to the gateway and actually resumes the parked run (without the run_id the card would render but the response would fall through to the local path and return `{"ok": false}`). Thanks @rodboev.
+
 ## [v0.51.537] — 2026-06-20 — Release SV (queued card clears on session switch)
 
 ### Fixed
