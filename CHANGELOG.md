@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [v0.51.544] — 2026-06-20 — Release TC (opt-in: render markdown in your own messages)
+
+### Added
+
+- **Optional setting to render markdown in your own sent messages (#3870).** By default, user message bubbles show typed markdown as-is (`**bold**`, `- lists`, `[links](url)` stay literal — code fences and math already render). A new **Settings → Conversation → "Render markdown in user messages"** toggle (default OFF) routes user text through the same `renderMd()` sanitizer the assistant messages use, so your own markdown renders too. Fully opt-in and self-contained: with the toggle off, the render path is byte-identical to before (zero change for anyone who doesn't enable it). User text goes through the identical SAFE_TAGS / `_isSafeUrl` allowlist sanitizer (XSS-safe), and the render cache key folds the toggle state so flipping it never serves a stale render. Thanks @rodboev.
+
 ## [v0.51.543] — 2026-06-20 — Release TB (stable assistant turn anchors — Compact Worklog stays consistent across live, settle, refresh, and re-entry)
 
 ### Added
