@@ -9112,8 +9112,8 @@ def handle_get(handler, parsed) -> bool:
         # profile's (#3957). Without this, get_auth_status() probes on a
         # non-default profile resolve the wrong/empty creds and can stall past
         # the 30s frontend timeout. No-op for the default profile.
-        from api.profiles import profile_env_for_active_request
-        with profile_env_for_active_request("/api/providers", logger_override=logger):
+        from api.profiles import profile_env_for_active_request_readonly
+        with profile_env_for_active_request_readonly("/api/providers", logger_override=logger):
             return j(handler, get_providers())
 
     # ── Plugins/hooks visibility (read-only, no callback/source internals) ──
@@ -9129,8 +9129,8 @@ def handle_get(handler, parsed) -> bool:
         # read/write runs under the process-default profile, so a multi-profile
         # client would see (and seed) the default profile's pool instead of its
         # own (#4247/#4067 profile-isolation class).
-        from api.profiles import profile_env_for_active_request
-        with profile_env_for_active_request("/api/provider/quota", logger_override=logger):
+        from api.profiles import profile_env_for_active_request_readonly
+        with profile_env_for_active_request_readonly("/api/provider/quota", logger_override=logger):
             return j(handler, get_provider_quota(provider_id, refresh=refresh))
 
     if parsed.path == "/api/provider/cost-history":

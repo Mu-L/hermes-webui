@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [v0.51.590] — 2026-06-22 — Release UW (close cross-profile credential leak on /api/providers + /api/models)
+
+### Fixed
+
+- **A named profile can no longer inherit the server's process-level provider credentials.** On a multi-profile instance, reads behind `/api/providers`, `/api/provider/quota`, and the synchronous `/api/models` rebuild could fall through to the server process environment — so a named profile with no key of its own would surface (and use, for quota probes) the default profile's API key. Credential reads now route through a thread-local profile channel that refuses the process-env fallback under a profile-scoped read: provider/model env vars, the agent auth-registry credentials (incl. OAuth tokens like `ANTHROPIC_TOKEN`/`CLAUDE_CODE_OAUTH_TOKEN`), the generic `CUSTOM_API_KEY`, the full AWS/Bedrock credential chain, and the Azure identity + managed-identity families are all scrubbed from the quota subprocess and the detached-worker model-rebuild env, and `${VAR}` config-template expansion no longer reconstructs a process credential under a scoped read. Region/base-URL config values are preserved. Thanks @rodboev. (#4544, fixes #3961)
+
 ## [v0.51.589] — 2026-06-22 — Release UV (guard state.db replay after compressed anchors)
 
 ### Fixed
