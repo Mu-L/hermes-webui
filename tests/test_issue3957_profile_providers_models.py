@@ -793,3 +793,56 @@ def test_detached_worker_scope_scrubs_anthropic_token_aliases(monkeypatch, tmp_p
     assert os.environ.get("ANTHROPIC_TOKEN") == "process-default-anthropic-token"
     assert os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") == "process-default-oauth-token"
 
+
+def test_account_usage_subprocess_env_strips_non_registry_agent_creds(monkeypatch, tmp_path):
+    """Quota probes must not inherit process-default credential env vars the agent
+    resolves via raw os.getenv() but that are NOT in the auth registry — the
+    generic CUSTOM_API_KEY and the AWS/Bedrock credential family. Otherwise a
+    custom/AWS-backed provider quota probe leaks the server-process credential
+    to an empty named profile (#3961 residual leak class)."""
+    from api.providers import _account_usage_subprocess_env
+
+    base = tmp_path / ".hermes"
+    work_home = base / "profiles" / "work"
+    work_home.mkdir(parents=True)
+    monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", base)
+    monkeypatch.setenv("CUSTOM_API_KEY", "process-default-custom-key")
+    monkeypatch.setenv("AWS_PROFILE", "process-default-aws-profile")
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "process-default-bedrock-token")
+
+    profiles.set_request_profile("work")
+    try:
+        with profiles.profile_env_for_active_request_readonly("quota probe"):
+            env = _account_usage_subprocess_env(work_home, "openai", None)
+    finally:
+        profiles.clear_request_profile()
+
+    assert env["HERMES_HOME"] == str(work_home)
+    assert "CUSTOM_API_KEY" not in env
+    assert "AWS_PROFILE" not in env
+    assert "AWS_BEARER_TOKEN_BEDROCK" not in env
+
+
+def test_detached_worker_scope_scrubs_non_registry_agent_creds(monkeypatch, tmp_path):
+    """Detached/sync model-rebuild scope must scrub the non-registry agent
+    credential env vars (CUSTOM_API_KEY, AWS/Bedrock family) too — the agent's
+    custom-provider and bedrock-adapter paths resolve them via raw os.getenv(),
+    so an empty named profile must not see the server-process value (#3961)."""
+    base = tmp_path / ".hermes"
+    work_home = base / "profiles" / "work"
+    work_home.mkdir(parents=True)
+    monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", base)
+    monkeypatch.setenv("CUSTOM_API_KEY", "process-default-custom-key")
+    monkeypatch.setenv("AWS_PROFILE", "process-default-aws-profile")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "process-default-aws-secret")
+
+    with profiles.profile_scope_for_detached_worker("work", "test-worker"):
+        assert os.environ.get("CUSTOM_API_KEY") is None
+        assert os.environ.get("AWS_PROFILE") is None
+        assert os.environ.get("AWS_SECRET_ACCESS_KEY") is None
+        assert config._thread_local_env_value("CUSTOM_API_KEY") == ""
+
+    assert os.environ.get("CUSTOM_API_KEY") == "process-default-custom-key"
+    assert os.environ.get("AWS_PROFILE") == "process-default-aws-profile"
+    assert os.environ.get("AWS_SECRET_ACCESS_KEY") == "process-default-aws-secret"
+

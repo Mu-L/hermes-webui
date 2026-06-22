@@ -885,15 +885,46 @@ def filter_runtime_env_for_gateway_parity(env: dict[str, str]) -> dict[str, str]
     return filtered
 
 
+# Credential env vars the agent runtime resolves via raw os.getenv() that are
+# NOT in hermes_cli.auth.PROVIDER_REGISTRY (so the registry-derived scrub set
+# would miss them). Fail-closed list — verified against the installed agent:
+#   CUSTOM_API_KEY            hermes_cli/models.py (generic custom provider key)
+#   AZURE_ANTHROPIC_KEY       hermes_cli/runtime_provider.py (Azure-hosted Anthropic)
+#   AWS_BEARER_TOKEN_BEDROCK  hermes_cli/model_switch.py (Bedrock bearer token)
+#   AWS_*                     agent/bedrock_adapter.py (boto3 credential chain)
+# Stripping these in a profile-scoped read prevents an empty named profile from
+# inheriting the server-process credential (#3961 residual cross-profile leak).
+_NON_REGISTRY_AGENT_CREDENTIAL_ENV_NAMES: tuple[str, ...] = (
+    "CUSTOM_API_KEY",
+    "AZURE_ANTHROPIC_KEY",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_PROFILE",
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+)
+
+
 def _agent_registry_credential_env_names() -> set[str]:
-    """Credential env-var names the *agent* runtime reads (hermes_cli auth
-    registry), e.g. OAuth/token-flow providers like Anthropic's ANTHROPIC_TOKEN
-    and CLAUDE_CODE_OAUTH_TOKEN. The WebUI's own _PROVIDER_ENV_VAR map omits
-    these (they aren't WebUI-settable API keys), so a profile scrub built only
-    from the WebUI map would leave them in os.environ — letting an empty named
-    profile inherit the server-process Anthropic token on the quota subprocess
-    and detached-worker model-rebuild paths (#3961 residual leak)."""
-    names: set[str] = set()
+    """Credential env-var names the *agent* runtime reads, beyond the WebUI's own
+    settable-key map. Two sources:
+
+    1. ``hermes_cli.auth.PROVIDER_REGISTRY[*].api_key_env_vars`` — every provider
+       the agent CLI knows, incl. OAuth/token-flow providers like Anthropic's
+       ``ANTHROPIC_TOKEN`` / ``CLAUDE_CODE_OAUTH_TOKEN`` that the WebUI's own
+       ``_PROVIDER_ENV_VAR`` map omits (they aren't WebUI-settable API keys).
+    2. ``_NON_REGISTRY_AGENT_CREDENTIAL_ENV_NAMES`` — a fail-closed fallback for
+       credential env vars the agent resolves via raw ``os.getenv()`` that are NOT
+       in the auth registry (the generic ``CUSTOM_API_KEY`` and the AWS/Bedrock
+       credential family the bedrock adapter relies on).
+
+    A profile scrub built only from the WebUI map would leave all of these in
+    ``os.environ`` — letting an empty named profile inherit the server-process
+    credential on the quota subprocess and detached-worker model-rebuild paths
+    (#3961 residual cross-profile leak)."""
+    names: set[str] = set(_NON_REGISTRY_AGENT_CREDENTIAL_ENV_NAMES)
     try:
         from hermes_cli.auth import PROVIDER_REGISTRY
 

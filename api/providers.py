@@ -1404,13 +1404,17 @@ def _account_usage_subprocess_env(home: Path, provider: str, api_key: str | None
     except Exception:
         _thread_ctx = None
     if bool(getattr(_thread_ctx, "block_process_env_fallback", False)):
+        # Rely on the centralized profile scrub set (api.profiles), which unions
+        # the WebUI provider env vars + the agent auth registry + the non-registry
+        # agent credential fallback (CUSTOM_API_KEY, AWS/Bedrock family). Falling
+        # back to the WebUI-only set keeps the probe fail-closed if that import
+        # fails. (#3961 — don't leave a partial local AWS set here.)
         _strip = set(_PROVIDER_CREDENTIAL_ENV_VARS)
-        _strip.update({"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"})
         try:
             from api.profiles import _profile_secret_env_names, get_active_hermes_home
             _strip.update(_profile_secret_env_names(get_active_hermes_home()))
         except Exception:
-            pass
+            _strip.update({"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"})
         for env_name in _strip:
             env.pop(env_name, None)
     env["HERMES_HOME"] = str(Path(home))
