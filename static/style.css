@@ -5119,13 +5119,21 @@ main.main > #mainPlugin{display:none;}
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  /* #4724-followup: wrap to a second line on narrow screens (mobile / split panes)
+     instead of overflowing the row. A long model name + duration + token/cost stats
+     can exceed the width; without wrap the per-message action buttons get pushed off
+     the right edge and become unreachable on mobile. Wrapping keeps every stat fully
+     readable (no ellipsis) and the buttons on-screen; on desktop where it already fits,
+     wrap never triggers so nothing changes. */
+  flex-wrap: wrap;
+  row-gap: 2px;
   gap: 6px;
   margin-top: 4px;
   font-size: 11px;
   color: var(--muted);
 }
-.msg-foot .msg-actions { opacity: 1; margin-left: 0; }
-.msg-foot .msg-time { font-size: 10.5px; opacity: .75; }
+.msg-foot .msg-actions { opacity: 1; margin-left: 0; flex: 0 0 auto; }
+.msg-foot .msg-time { font-size: 10.5px; opacity: .75; flex: 0 0 auto; }
 .session-jump-btn--inline {
   position: static;
   right: auto;
