@@ -14783,7 +14783,12 @@ function _clearWsDragData(){
 if(typeof window!=='undefined'&&!window._wsDragCleanupBound){
   window._wsDragCleanupBound=true;
   window.addEventListener('dragend',_clearWsDragData,true);
-  window.addEventListener('drop',_clearWsDragData,true);
+  // Defer the drop cleanup a tick: this capture-phase window listener fires
+  // BEFORE the target element's ondrop, so clearing synchronously here would
+  // wipe _wsActiveDragPath before _isWorkspaceTreeMoveDrag()/_wsDragSrcPath()
+  // run in the target handler — re-breaking the macOS stripped-MIME move. The
+  // setTimeout lets the real drop handler complete, then clears the lingering flag.
+  window.addEventListener('drop',()=>setTimeout(_clearWsDragData,0),true);
   window.addEventListener('pagehide',_clearWsDragData);
   window.addEventListener('blur',_clearWsDragData);
 }
