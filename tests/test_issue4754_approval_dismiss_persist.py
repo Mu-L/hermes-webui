@@ -140,10 +140,55 @@ def test_no_pending_branch_unmarks_dismissed():
     branch_marker = "elseif(!_approvalPollingSessionMissingOrMismatched(sid)){"
     branch_start = compact.find(branch_marker)
     assert branch_start != -1, "no-pending poll else-if branch must exist"
-    # _unmarkApprovalDismissed must appear within the branch (before _hideApprovalCardIfOwner)
-    nearby = compact[branch_start:branch_start + 300]
-    assert "_unmarkApprovalDismissed(_approvalCurrentId)" in nearby, \
-        "no-pending poll branch must unmark dismissed when server clears the approval"
+    nearby = compact[branch_start:branch_start + 400]
+    # Must use session-scoped lookup, not the global _approvalCurrentId
+    assert "_approvalPendingBySession.get(sid)" in nearby, \
+        "no-pending poll branch must read session-scoped pending via _approvalPendingBySession.get(sid)"
+    assert "_unmarkApprovalDismissed(_resolvedId)" in nearby, \
+        "no-pending poll branch must unmark the session-scoped resolved ID"
+    # Must NOT use the global _approvalCurrentId to unmark (that caused the cross-session bug)
+    assert "_unmarkApprovalDismissed(_approvalCurrentId)" not in nearby, \
+        "no-pending poll branch must not unmark via the global _approvalCurrentId"
+
+
+def test_no_pending_branch_reads_pending_before_clear():
+    # The session-scoped entry must be read BEFORE _clearApprovalPendingForSession erases it.
+    compact = _compact(MESSAGES_JS)
+    branch_marker = "elseif(!_approvalPollingSessionMissingOrMismatched(sid)){"
+    branch_start = compact.find(branch_marker)
+    assert branch_start != -1
+    nearby = compact[branch_start:branch_start + 400]
+    get_idx = nearby.find("_approvalPendingBySession.get(sid)")
+    clear_idx = nearby.find("_clearApprovalPendingForSession(sid)")
+    assert get_idx != -1, "_approvalPendingBySession.get(sid) must appear in branch"
+    assert clear_idx != -1, "_clearApprovalPendingForSession(sid) must appear in branch"
+    assert get_idx < clear_idx, \
+        "_approvalPendingBySession.get(sid) must come before _clearApprovalPendingForSession"
+
+
+def test_cross_session_dismiss_not_cleared_by_other_session_poll():
+    """Polling session B with no pending must not un-dismiss session A's dismissed approval.
+
+    Simulates the node-driver scenario:
+    - session A has approval X in _approvalPendingBySession (it was dismissed)
+    - _approvalCurrentId still holds X from before a session switch
+    - polling session B returns no-pending
+    - the branch must NOT unmark X because _approvalPendingBySession.get(sid_B) is empty
+    """
+    compact = _compact(MESSAGES_JS)
+    branch_marker = "elseif(!_approvalPollingSessionMissingOrMismatched(sid)){"
+    branch_start = compact.find(branch_marker)
+    assert branch_start != -1
+    nearby = compact[branch_start:branch_start + 400]
+
+    # The resolved ID must come from the session map, not the global
+    assert "_approvalPendingBySession.get(sid)" in nearby, \
+        "resolved ID source must be session-scoped, not the global _approvalCurrentId"
+
+    # The guard must be conditional on the resolved ID being truthy so that when
+    # the session being polled has no pending entry, _unmarkApprovalDismissed is skipped.
+    assert "if(_resolvedId)" in nearby, \
+        "unmark must be gated on _resolvedId so it fires only for the resolved session"
 
 
 # ---------------------------------------------------------------------------
