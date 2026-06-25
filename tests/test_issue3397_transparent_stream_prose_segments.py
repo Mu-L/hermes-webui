@@ -116,11 +116,47 @@ def test_render_messages_wires_ordered_parts_into_transparent_stream_and_skips_d
     assert "const partDisplayText=_transparentOrderedDisplayText(part.text);" in UI_JS
     assert "const partBodyHtml=_getCachedRender(partDisplayText,false);" in UI_JS
     assert "const transparentOrderedToolIds=new Set();" in UI_JS
-    assert "const toolCall=_transparentOrderedToolCall(part, rawIdx, transparentOrderedToolCallsByTid, transparentToolResultsByTid);" in UI_JS
+    assert "const toolCall=_transparentOrderedToolCall(part, rawIdx, transparentOrderedToolCallsByTid, transparentToolResultsByTid, transparentPersistedSnippetByTid);" in UI_JS
     assert "if(part.toolUseId) transparentOrderedToolIds.add(part.toolUseId);" in UI_JS
     assert "if(tid&&transparentOrderedToolIds.has(tid)) continue;" in UI_JS
 
 
 def test_ordered_tool_cards_refresh_from_settled_results_even_after_live_preview():
-    assert "if(resultsByTid&&resultsByTid[tid]){" in UI_JS
+    assert "const liveSnip=(resultsByTid&&resultsByTid[tid])||(persistedByTid&&persistedByTid[tid])||'';" in UI_JS
     assert "(next.snippet===undefined||next.snippet===null||next.snippet==='')" not in UI_JS
+
+
+def test_ordered_tool_card_falls_back_to_persisted_snippet_on_cold_load():
+    # #4932 gate (#4927 parity): on a cold/paginated load the S.messages
+    # tool_result join misses; the ordered inline card must still recover the
+    # body from the persisted session.tool_calls snippet (persistedByTid),
+    # otherwise its card renders empty AND suppresses the post-loop derived card
+    # that would have recovered it.
+    if NODE is None:
+        import pytest
+        pytest.skip("node not on PATH")
+    driver = r"""
+const fs=require('fs');
+const src=fs.readFileSync(process.argv[2],'utf8');
+function grab(n){const re=new RegExp('function '+n+'\\([^]*?\\n}','m');const m=src.match(re);if(!m)throw new Error('not found '+n);return m[0];}
+global._cliPatchSnippetFromArgs=()=> '';
+global._cliToolCardSnippet=(a,b)=> a||b||'';
+global._cliToolCardHasDiffSnippet=()=> false;
+global._toolArgsSnapshot=(a)=> a||{};
+eval(grab('_transparentOrderedToolCall'));
+const part={kind:'tool', toolUseId:'call_x', name:'terminal', input:{command:'ls'}};
+// resultsByTid MISSES (cold load), persistedByTid HAS the snippet.
+const out=_transparentOrderedToolCall(part, 3, new Map(), {}, {call_x:'PERSISTED_OUTPUT_42'});
+process.stdout.write(JSON.stringify({snippet: out.snippet}));
+"""
+    import tempfile, os
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+        fh.write(driver)
+        path = fh.name
+    try:
+        result = subprocess.run([NODE, path, str(UI_JS_PATH)], capture_output=True, text=True, timeout=30)
+    finally:
+        os.unlink(path)
+    assert result.returncode == 0, result.stderr
+    import json as _json
+    assert _json.loads(result.stdout)["snippet"] == "PERSISTED_OUTPUT_42", result.stdout

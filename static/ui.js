@@ -11181,15 +11181,16 @@ function _collectToolResultSnippetsByTid(messages){
   }
   return resultsByTid;
 }
-function _transparentOrderedToolCall(part, rawIdx, toolCallsByTid, resultsByTid){
+function _transparentOrderedToolCall(part, rawIdx, toolCallsByTid, resultsByTid, persistedByTid){
   const tid=String(part&&part.toolUseId||'').trim();
   const liveTool=tid&&toolCallsByTid&&toolCallsByTid.get(tid);
   if(liveTool){
     const next={...liveTool};
-    if(resultsByTid&&resultsByTid[tid]){
+    const liveSnip=(resultsByTid&&resultsByTid[tid])||(persistedByTid&&persistedByTid[tid])||'';
+    if(liveSnip){
       const patchSnippet=_cliPatchSnippetFromArgs(next.name||part.name||'tool', next.args||part.input||{});
-      next.snippet=_cliToolCardSnippet(resultsByTid[tid],patchSnippet);
-      next.is_diff=_cliToolCardHasDiffSnippet(resultsByTid[tid],patchSnippet);
+      next.snippet=_cliToolCardSnippet(liveSnip,patchSnippet);
+      next.is_diff=_cliToolCardHasDiffSnippet(liveSnip,patchSnippet);
     }
     if(next.done===undefined) next.done=true;
     return next;
@@ -11197,7 +11198,7 @@ function _transparentOrderedToolCall(part, rawIdx, toolCallsByTid, resultsByTid)
   const name=part&&part.name||'tool';
   const args=(part&&part.input&&typeof part.input==='object')?part.input:{};
   const patchSnippet=_cliPatchSnippetFromArgs(name,args);
-  const resultSnippet=(resultsByTid&&tid&&resultsByTid[tid])||'';
+  const resultSnippet=(resultsByTid&&tid&&resultsByTid[tid])||(persistedByTid&&tid&&persistedByTid[tid])||'';
   return {
     name,
     tid,
@@ -11554,14 +11555,33 @@ function renderMessages(options){
   }
   const transparentOrderedToolIds=new Set();
   const transparentOrderedToolCallsByTid=new Map();
-  if(Array.isArray(S.toolCalls)){
-    for(const tc of S.toolCalls){
-      if(!tc||typeof tc!=='object') continue;
-      const tid=tc.tid||tc.id||tc.tool_call_id||tc.tool_use_id||tc.call_id||'';
-      if(tid&&!transparentOrderedToolCallsByTid.has(tid)) transparentOrderedToolCallsByTid.set(tid,tc);
+  // These scans only feed the transparent-stream ordered render path; skip the
+  // O(messages×parts) work entirely in other modes (Opus perf finding #4932).
+  const _transparentModeActive=(typeof isTransparentStream==='function')&&isTransparentStream();
+  const transparentPersistedSnippetByTid={};
+  if(_transparentModeActive){
+    if(Array.isArray(S.toolCalls)){
+      for(const tc of S.toolCalls){
+        if(!tc||typeof tc!=='object') continue;
+        const tid=tc.tid||tc.id||tc.tool_call_id||tc.tool_use_id||tc.call_id||'';
+        if(tid&&!transparentOrderedToolCallsByTid.has(tid)) transparentOrderedToolCallsByTid.set(tid,tc);
+      }
     }
+    // #4927 durable fallback: the ordered path must consult the persisted
+    // session.tool_calls snippet by tid too, or a cold/paginated load where the
+    // S.messages tool_result join misses renders an empty body — and its inline
+    // card then suppresses the post-loop derived card that WOULD have recovered.
+    try{
+      const persisted=(S.session&&Array.isArray(S.session.tool_calls))?S.session.tool_calls:[];
+      persisted.forEach(tc=>{
+        if(!tc||typeof tc!=='object') return;
+        const ptid=tc.tid||tc.id||tc.tool_call_id||tc.call_id||'';
+        const psnip=tc.snippet||tc.result||tc.output||tc.preview||'';
+        if(ptid&&psnip&&!transparentPersistedSnippetByTid[ptid]) transparentPersistedSnippetByTid[ptid]=String(psnip);
+      });
+    }catch(e){}
   }
-  const transparentToolResultsByTid=_collectToolResultSnippetsByTid(S.messages);
+  const transparentToolResultsByTid=_transparentModeActive?_collectToolResultSnippetsByTid(S.messages):{};
   // Windowed render loop replaces the legacy full loop:
   // for(let vi=0;vi<visWithIdx.length;vi++)
   for(let vi=0;vi<renderVisWithIdx.length;vi++){
@@ -11771,7 +11791,7 @@ function renderMessages(options){
       orderedTransparentParts.forEach((part, partIdx)=>{
         if(!part) return;
         if(part.kind==='tool'){
-          const toolCall=_transparentOrderedToolCall(part, rawIdx, transparentOrderedToolCallsByTid, transparentToolResultsByTid);
+          const toolCall=_transparentOrderedToolCall(part, rawIdx, transparentOrderedToolCallsByTid, transparentToolResultsByTid, transparentPersistedSnippetByTid);
           const toolRow=_decorateTransparentEventRow(buildToolCard(toolCall),{
             type:'tool',
             name:toolCall&&toolCall.name,
