@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [v0.51.671] — 2026-06-26 — Release YA (sidebar polls no longer stall behind a slow session-list rebuild)
+
+### Fixed
+
+- **The conversation sidebar no longer stalls (or pins CPU) while a cron-heavy session-list rebuild is in flight.** `get_cli_sessions()` previously held the CLI/cron cache lock across the entire slow rebuild, so one refresh serialized every follower `/api/sessions` poll for that key — a recurring multi-second `/api/session` stall and 100% CPU on long-lived, cron-heavy instances (#4842). The rebuild now runs outside the lock with stale-while-revalidate + singleflight: followers serve the existing rows during a rebuild and a single owner refreshes (cold followers join it rather than each starting a parallel rebuild), with bounded waits so a slow owner can never hang a follower, and cache invalidation stays atomic across a clear-during-rebuild. Completes the #4842 performance chain on top of #4889 and #4908/#4949. Thanks @rodboev. (#4952, closes #4842)
+
 ## [v0.51.670] — 2026-06-26 — Release XZ (settled tool-call rows stay before the final answer)
 
 ### Fixed
