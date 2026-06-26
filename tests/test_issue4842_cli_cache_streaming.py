@@ -266,3 +266,28 @@ def test_get_cli_sessions_clear_during_rebuild_preserves_joiners(monkeypatch, tm
     assert results.get("owner") == [{"session_id": "owner", "title": "owner-row"}]
     assert results.get("follower_a") == [{"session_id": "fresh", "title": "fresh-row"}]
     assert results.get("follower_b") == [{"session_id": "fresh", "title": "fresh-row"}]
+
+
+def test_cache_cli_sessions_if_current_skips_stale_store(monkeypatch, tmp_path):
+    hermes_home = tmp_path / "hermes"
+    hermes_home.mkdir()
+    monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: str(hermes_home))
+    monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "default")
+    models.clear_cli_sessions_cache()
+    monkeypatch.setattr(models, "_CLI_SESSIONS_CACHE_TTL_SECONDS", 60.0, raising=False)
+
+    _, _, _, cache_key = models._resolve_cli_sessions_context(None)
+    invalidation_stamp = models._cli_sessions_cache_invalidation_stamp()
+
+    models.clear_cli_sessions_cache()
+
+    stored = models._cache_cli_sessions_if_current(
+        cache_key,
+        60.0,
+        invalidation_stamp,
+        [{"session_id": "stale", "title": "stale-row"}],
+    )
+
+    assert stored is False
+    with models._CLI_SESSIONS_CACHE_LOCK:
+        assert cache_key not in models._CLI_SESSIONS_CACHE

@@ -4247,6 +4247,23 @@ def _cli_sessions_cache_done(cache_key: tuple, event: threading.Event | None) ->
         event.set()
 
 
+def _cache_cli_sessions_if_current(
+    cache_key: tuple,
+    ttl: float,
+    invalidation_stamp: int,
+    sessions: list,
+) -> bool:
+    with _CLI_SESSIONS_CACHE_LOCK:
+        if _CLI_SESSIONS_CACHE_INVALIDATION_VERSION != invalidation_stamp:
+            return False
+        _CLI_SESSIONS_CACHE[cache_key] = (
+            time.monotonic() + ttl,
+            invalidation_stamp,
+            _copy_cli_sessions(sessions),
+        )
+    return True
+
+
 def _reload_cli_sessions_after_inflight(
     *,
     cache_key: tuple,
@@ -4291,13 +4308,12 @@ def _reload_cli_sessions_after_inflight(
             if stale_sessions is not None and stale_stamp == _cli_sessions_cache_invalidation_stamp():
                 return stale_sessions
             return []
-        if _cli_sessions_cache_invalidation_stamp() == fallback_invalidation_stamp:
-            with _CLI_SESSIONS_CACHE_LOCK:
-                _CLI_SESSIONS_CACHE[cache_key] = (
-                    time.monotonic() + ttl,
-                    _CLI_SESSIONS_CACHE_INVALIDATION_VERSION,
-                    _copy_cli_sessions(sessions),
-                )
+        _cache_cli_sessions_if_current(
+            cache_key,
+            ttl,
+            fallback_invalidation_stamp,
+            sessions,
+        )
         return _copy_cli_sessions(sessions)
     finally:
         _cli_sessions_cache_done(cache_key, event)
@@ -4919,13 +4935,12 @@ def get_cli_sessions(source_filter=None, *, all_profiles: bool = False) -> list:
                         "all profiles" if all_profiles else db_path, _cli_err,
                     )
                     return []
-                if _cli_sessions_cache_invalidation_stamp() == invalidation_stamp:
-                    with _CLI_SESSIONS_CACHE_LOCK:
-                        _CLI_SESSIONS_CACHE[cache_key] = (
-                            time.monotonic() + ttl,
-                            _CLI_SESSIONS_CACHE_INVALIDATION_VERSION,
-                            _copy_cli_sessions(sessions),
-                        )
+                _cache_cli_sessions_if_current(
+                    cache_key,
+                    ttl,
+                    invalidation_stamp,
+                    sessions,
+                )
                 return _copy_cli_sessions(sessions)
             finally:
                 _cli_sessions_cache_done(cache_key, event)
