@@ -5215,30 +5215,51 @@ def _read_profile_model_config(
 ) -> tuple[str | None, str | None]:
     """Read model.provider and model.default from the session's profile config.
 
-    Returns (profile_provider, profile_default_model). Both are None when
-    the session has no profile, the profile config is unreadable, or an
-    explicit ``requested_provider`` is already set (profile should not
-    override explicit selections).
+    Returns (profile_provider, profile_default_model). Both are None when the
+    session has no profile or the profile config is unreadable.
+
+    When the session already has an explicit ``requested_provider``, the profile
+    ``model.provider`` is not returned (first tuple element is None) so profile
+    does not override the session provider. ``profile_default_model`` is still
+    returned for suffix repair (#5127) only when the profile's configured
+    provider matches ``requested_provider`` after normalization.
     """
-    if _clean_session_model_provider(requested_provider) or not getattr(session, "profile", None):
+    if not getattr(session, "profile", None):
         return None, None
+
     try:
         from api.profiles import get_hermes_home_for_profile
+
         _profile_home = get_hermes_home_for_profile(session.profile)
         _profile_cfg_path = os.path.join(str(_profile_home), "config.yaml")
         if not os.path.isfile(_profile_cfg_path):
             return None, None
         import yaml
+
         with open(_profile_cfg_path, encoding="utf-8") as _f:
             _pcfg = yaml.safe_load(_f) or {}
         if not isinstance(_pcfg, dict):
             return None, None
-        _provider = (_pcfg.get("model", {}).get("provider") or "").strip() or None
-        _default = (_pcfg.get("model", {}).get("default") or "").strip() or None
-        return _provider, _default
+        _model_cfg = _pcfg.get("model") or {}
+        if not isinstance(_model_cfg, dict):
+            return None, None
+        _provider = (_model_cfg.get("provider") or "").strip() or None
+        _default = (_model_cfg.get("default") or "").strip() or None
     except Exception:
-        logger.warning("profile provider read failed for %r", getattr(session, "profile", None), exc_info=True)
+        logger.warning(
+            "profile provider read failed for %r",
+            getattr(session, "profile", None),
+            exc_info=True,
+        )
         return None, None
+
+    _requested = _clean_session_model_provider(requested_provider)
+    if _requested:
+        _profile_prov = _clean_session_model_provider(_provider)
+        if _profile_prov != _requested:
+            return None, None
+        return None, _default
+    return _provider, _default
 
 
 def _resolve_compatible_session_model_state(
@@ -5303,6 +5324,23 @@ def _resolve_compatible_session_model_state(
             and model_prefix == "openai"
         )
         if not explicit_provider and not stale_codex_openai_slash_id:
+            _profile_default = str(profile_default_model or "").strip()
+            _profile_prov = _clean_session_model_provider(profile_provider)
+            _providers_match_for_repair = (
+                _profile_prov is None or _profile_prov == requested_provider
+            )
+            if (
+                _profile_default
+                and "/" in _profile_default
+                and "/" not in model
+                and _profile_default.rsplit("/", 1)[-1] == model
+                and _providers_match_for_repair
+                and (
+                    requested_provider == "custom"
+                    or str(requested_provider).startswith("custom:")
+                )
+            ):
+                return _profile_default, requested_provider, True
             return model, requested_provider, False
 
     # Default (human chat/start) path calls get_available_models() with NO
