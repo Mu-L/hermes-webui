@@ -3221,7 +3221,7 @@ function _sessionIdFromLocation(){
   }catch(_e){return null;}
 }
 function _composerPrefillIntentFromLocation(){
-  const empty={hasParams:false,hasText:false,text:''};
+  const empty={hasParams:false,hasText:false,text:'',autoSend:false};
   if(typeof window==='undefined'||!window.location) return empty;
   try{
     const qs=new URLSearchParams(window.location.search||'');
@@ -3230,10 +3230,12 @@ function _composerPrefillIntentFromLocation(){
     const hasSend=qs.has('send');
     if(!hasQ&&!hasPrompt&&!hasSend) return empty;
     const text=hasQ?(qs.get('q')||''):(hasPrompt?(qs.get('prompt')||''):'');
+    const autoSend=hasSend&&/^(1|true|yes|on)$/i.test(String(qs.get('send')||'').trim());
     return {
       hasParams:true,
       hasText:!!String(text).trim(),
-      text
+      text,
+      autoSend
     };
   }catch(_e){return empty;}
 }

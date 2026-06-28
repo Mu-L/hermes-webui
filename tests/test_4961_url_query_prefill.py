@@ -73,16 +73,19 @@ console.log(JSON.stringify({ first, second, third }));
         "hasParams": True,
         "hasText": True,
         "text": "hello world",
+        "autoSend": True,
     }
     assert payload["second"] == {
         "hasParams": True,
         "hasText": True,
         "text": "from prompt",
+        "autoSend": False,
     }
     assert payload["third"] == {
         "hasParams": True,
         "hasText": False,
         "text": "  ",
+        "autoSend": True,
     }
 
 
@@ -152,7 +155,7 @@ console.log(JSON.stringify(result));
     assert load_pos > prefill_guard
 
 
-def test_apply_prefill_updates_composer_without_autosend():
+def test_apply_prefill_updates_composer_and_optionally_autosends():
     source = _node_prelude() + """
 (async () => {
   evalBoot('_applyComposerPrefillOnBoot');
@@ -178,7 +181,7 @@ def test_apply_prefill_updates_composer_without_autosend():
 });
 """
     payload = json.loads(_run_node(source))
-    assert payload["counts"] == {"autoResize": 1, "updateSendBtn": 1, "send": 0}
+    assert payload["counts"] == {"autoResize": 1, "updateSendBtn": 1, "send": 1}
     assert payload["value"] == "second pass"
 
 

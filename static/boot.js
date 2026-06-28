@@ -109,9 +109,14 @@ async function _applyComposerPrefillOnBoot(prefillIntent){
   if(!msg) return;
   const text=String(prefillIntent.text||'');
   msg.value=text;
-  // Boot prefill is composer-only; URL params never submit on the user's behalf.
   if(typeof autoResize==='function') autoResize();
   else if(typeof updateSendBtn==='function') updateSendBtn();
+  if(!prefillIntent.autoSend) return;
+  if(typeof handleComposerPrimaryAction==='function'){
+    await handleComposerPrimaryAction();
+    return;
+  }
+  if(typeof send==='function') await send();
 }
 
 // Mobile navigation.
