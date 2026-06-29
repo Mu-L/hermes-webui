@@ -114,7 +114,7 @@ def test_hidden_poll_started_on_both_hidden_paths():
 
     # Path 2: inside startSessionStream's hidden early-return skip.
     start_idx = MESSAGES_JS.find("function startSessionStream(sid)")
-    block = MESSAGES_JS[start_idx:start_idx + 2400]
+    block = MESSAGES_JS[start_idx:start_idx + 2900]
     skip_idx = block.find("!== 'undefined' && document.hidden) {")
     assert skip_idx != -1
     skip_block = block[skip_idx:skip_idx + 400]

@@ -1668,6 +1668,7 @@ _session_list_runtime_sort_key = _route_session_list_cache._session_list_runtime
 _session_list_cache_set = _route_session_list_cache._session_list_cache_set
 _session_list_cache_source_stamp = _route_session_list_cache._session_list_cache_source_stamp
 _session_list_cache_state_db_fingerprint = _route_session_list_cache._session_list_cache_state_db_fingerprint
+_session_list_cache_stale_reason = _route_session_list_cache._session_list_cache_stale_reason
 _session_list_cache_streaming_freeze_marker = _route_session_list_cache._session_list_cache_streaming_freeze_marker
 
 _ROUTE_SESSION_LIST_CACHE_DYNAMIC_EXPORTS = {
@@ -2068,6 +2069,53 @@ def _get_cached_session_list_payload(
         return cached
 
     stale = cached  # now actually a stale payload when one exists, else None
+    stale_reason = _session_list_cache_stale_reason(key) if stale is not None else None
+    if stale is not None and stale_reason != "source":
+        event, is_owner = _session_list_cache_claim_rebuild(key)
+        if is_owner:
+            if diag is not None:
+                try:
+                    diag.stage("session_list_cache_stale_background_rebuild")
+                except Exception:
+                    pass
+
+            def _rebuild_stale_session_list_cache():
+                try:
+                    rebuild_attempts = 0
+                    while True:
+                        invalidation_stamp = _session_list_cache_invalidation_stamp(key)
+                        try:
+                            payload = builder()
+                        except Exception:
+                            logger.exception(
+                                "session list stale-cache background rebuild failed"
+                            )
+                            return
+                        if _session_list_cache_invalidation_stamp(key) == invalidation_stamp:
+                            _session_list_cache_set(key, payload)
+                            return
+                        rebuild_attempts += 1
+                        if rebuild_attempts >= 3:
+                            return
+                finally:
+                    _session_list_cache_done(key, event)
+
+            try:
+                thread = threading.Thread(
+                    target=_rebuild_stale_session_list_cache,
+                    name="session-list-cache-rebuild",
+                    daemon=True,
+                )
+                thread.start()
+            except Exception:
+                _session_list_cache_done(key, event)
+        elif diag is not None:
+            try:
+                diag.stage("session_list_cache_stale_return")
+            except Exception:
+                pass
+        return stale
+
     event, is_owner = _session_list_cache_claim_rebuild(key)
     if is_owner:
         if diag is not None:
