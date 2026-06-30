@@ -1,9 +1,12 @@
 import io
 import json
+import time
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec, utils
 
 
 class FakeHeaders(dict):
@@ -34,6 +37,31 @@ class RouteFakeHandler:
     def header_values(self, name):
         needle = name.lower()
         return [value for key, value in self.sent_headers if key.lower() == needle]
+
+def _ec_jwk(private_key, *, kid="key-1", alg="ES256"):
+    numbers = private_key.public_key().public_numbers()
+    size = (numbers.curve.key_size + 7) // 8
+    import api.auth_oidc as auth_oidc
+
+    return {
+        "kid": kid,
+        "kty": "EC",
+        "alg": alg,
+        "crv": "P-256",
+        "x": auth_oidc._b64u(numbers.x.to_bytes(size, "big")),
+        "y": auth_oidc._b64u(numbers.y.to_bytes(size, "big")),
+    }
+
+def _signed_es256_jwt(private_key, header, claims):
+    import api.auth_oidc as auth_oidc
+
+    header_b64 = auth_oidc._b64u(json.dumps(header, separators=(",", ":")).encode("utf-8"))
+    claims_b64 = auth_oidc._b64u(json.dumps(claims, separators=(",", ":")).encode("utf-8"))
+    signed = f"{header_b64}.{claims_b64}".encode("ascii")
+    der_signature = private_key.sign(signed, ec.ECDSA(hashes.SHA256()))
+    r, s = utils.decode_dss_signature(der_signature)
+    raw_signature = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    return f"{header_b64}.{claims_b64}.{auth_oidc._b64u(raw_signature)}"
 
 
 def test_oidc_start_redirects_with_pkce_state_and_nonce(monkeypatch):
@@ -326,3 +354,127 @@ def test_validate_id_token_rejects_mismatched_jwk_key_family(monkeypatch):
             nonce="nonce-token",
             jwks_uri="https://issuer.example/jwks",
         )
+
+def test_validate_id_token_accepts_real_es256_jose_signature(monkeypatch):
+    import api.auth_oidc as auth_oidc
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    token = _signed_es256_jwt(
+        private_key,
+        {"alg": "ES256", "kid": "key-1"},
+        {
+            "iss": "https://issuer.example",
+            "aud": "webui-client",
+            "exp": 32503680000,
+            "nonce": "nonce-token",
+            "sub": "user-123",
+        },
+    )
+    monkeypatch.setattr(
+        auth_oidc,
+        "_get_jwks_document",
+        lambda _jwks_uri, **_kwargs: {"keys": [_ec_jwk(private_key)]},
+    )
+
+    claims = auth_oidc._validate_id_token(
+        token,
+        client_id="webui-client",
+        issuer="https://issuer.example",
+        nonce="nonce-token",
+        jwks_uri="https://issuer.example/jwks",
+    )
+
+    assert claims["sub"] == "user-123"
+
+def test_complete_authorization_pins_discovery_to_configured_issuer(monkeypatch):
+    import api.auth_oidc as auth_oidc
+    from api.auth_oidc import OIDCAuthError
+
+    monkeypatch.setattr(
+        auth_oidc,
+        "_resolve_oidc_config",
+        lambda: {
+            "issuer": "https://issuer.example",
+            "client_id": "webui-client",
+            "client_secret": "",
+            "redirect_uri": "",
+            "scopes": ["openid"],
+            "allow_claim": "email",
+            "allow_values": ["user@example.com"],
+        },
+    )
+    monkeypatch.setattr(
+        auth_oidc,
+        "_get_discovery_document",
+        lambda _issuer: {
+            "issuer": "https://evil.example",
+            "token_endpoint": "https://issuer.example/token",
+            "jwks_uri": "https://issuer.example/jwks",
+        },
+    )
+    auth_oidc._pending_flows.clear()
+    auth_oidc._pending_flows["state-token"] = {
+        "created_at": time.time(),
+        "nonce": "nonce-token",
+        "code_verifier": "verifier",
+        "next_path": "/",
+    }
+
+    with pytest.raises(OIDCAuthError, match="discovery issuer"):
+        auth_oidc.complete_authorization_code_flow(
+            "http://localhost:8787",
+            "state-token",
+            "code-token",
+        )
+
+def test_validate_id_token_refetches_jwks_once_on_key_miss(monkeypatch):
+    import api.auth_oidc as auth_oidc
+
+    old_key = ec.generate_private_key(ec.SECP256R1())
+    new_key = ec.generate_private_key(ec.SECP256R1())
+    token = _signed_es256_jwt(
+        new_key,
+        {"alg": "ES256", "kid": "new-key"},
+        {
+            "iss": "https://issuer.example",
+            "aud": "webui-client",
+            "exp": 32503680000,
+            "nonce": "nonce-token",
+            "sub": "user-123",
+        },
+    )
+    jwks_uri = "https://issuer.example/jwks"
+    auth_oidc._jwks_cache.clear()
+    auth_oidc._jwks_cache[jwks_uri] = (
+        time.time() + 300,
+        {"keys": [_ec_jwk(old_key, kid="old-key")]},
+    )
+    fetches = []
+
+    def fake_fetch_json(url):
+        fetches.append(url)
+        return {"keys": [_ec_jwk(new_key, kid="new-key")]}
+
+    monkeypatch.setattr(auth_oidc, "_fetch_json", fake_fetch_json)
+
+    claims = auth_oidc._validate_id_token(
+        token,
+        client_id="webui-client",
+        issuer="https://issuer.example",
+        nonce="nonce-token",
+        jwks_uri=jwks_uri,
+    )
+
+    assert claims["sub"] == "user-123"
+    assert fetches == [jwks_uri]
+
+def test_pending_oidc_flows_are_bounded(monkeypatch):
+    import api.auth_oidc as auth_oidc
+
+    monkeypatch.setattr(auth_oidc, "_MAX_PENDING_FLOWS", 2)
+    auth_oidc._pending_flows.clear()
+    auth_oidc._store_pending_flow("old", {"created_at": 1, "nonce": "old"})
+    auth_oidc._store_pending_flow("middle", {"created_at": 2, "nonce": "middle"})
+    auth_oidc._store_pending_flow("new", {"created_at": 3, "nonce": "new"})
+
+    assert set(auth_oidc._pending_flows) == {"middle", "new"}

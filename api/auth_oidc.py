@@ -14,7 +14,7 @@ from typing import Any
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa, utils
 
 from api.config import get_config
 
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_SCOPES = ("openid", "profile", "email")
 _PENDING_TTL_SECONDS = 600
+_MAX_PENDING_FLOWS = 128
 _CLOCK_SKEW_SECONDS = 60
 _CACHE_TTL_SECONDS = 300
 
@@ -101,6 +102,9 @@ def complete_authorization_code_flow(
     if pending is None:
         raise OIDCAuthError("Invalid OIDC state", status_code=401)
     discovery = _get_discovery_document(cfg["issuer"])
+    discovery_issuer = str(discovery.get("issuer") or "").strip()
+    if discovery_issuer and discovery_issuer != cfg["issuer"]:
+        raise OIDCAuthError("OIDC discovery issuer did not match the configured issuer", status_code=502)
     token_endpoint = str(discovery.get("token_endpoint") or "").strip()
     if not token_endpoint:
         raise OIDCConfigError("OIDC discovery document is missing token_endpoint")
@@ -122,7 +126,7 @@ def complete_authorization_code_flow(
     claims = _validate_id_token(
         id_token,
         client_id=cfg["client_id"],
-        issuer=str(discovery.get("issuer") or cfg["issuer"]).strip(),
+        issuer=cfg["issuer"],
         nonce=pending["nonce"],
         jwks_uri=str(discovery.get("jwks_uri") or "").strip(),
     )
@@ -235,6 +239,7 @@ def _store_pending_flow(state: str, payload: dict[str, Any]) -> None:
     now = time.time()
     with _pending_lock:
         _prune_pending_flows(now)
+        _trim_pending_flows()
         _pending_flows[state] = payload
 
 
@@ -256,6 +261,18 @@ def _prune_pending_flows(now: float) -> None:
         _pending_flows.pop(state, None)
 
 
+def _trim_pending_flows() -> None:
+    overflow = len(_pending_flows) - _MAX_PENDING_FLOWS + 1
+    if overflow <= 0:
+        return
+    oldest = sorted(
+        _pending_flows,
+        key=lambda state: float(_pending_flows[state].get("created_at") or 0),
+    )
+    for state in oldest[:overflow]:
+        _pending_flows.pop(state, None)
+
+
 def _get_discovery_document(issuer: str) -> dict[str, Any]:
     discovery_url = _discovery_url_for_issuer(issuer)
     cached = _cache_get(_discovery_lock, _discovery_cache, discovery_url)
@@ -274,12 +291,16 @@ def _discovery_url_for_issuer(issuer: str) -> str:
     return issuer.rstrip("/") + "/.well-known/openid-configuration"
 
 
-def _get_jwks_document(jwks_uri: str) -> dict[str, Any]:
+def _get_jwks_document(jwks_uri: str, *, force_refresh: bool = False) -> dict[str, Any]:
     if not jwks_uri:
         raise OIDCConfigError("OIDC discovery document is missing jwks_uri")
-    cached = _cache_get(_jwks_lock, _jwks_cache, jwks_uri)
-    if cached is not None:
-        return cached
+    if force_refresh:
+        with _jwks_lock:
+            _jwks_cache.pop(jwks_uri, None)
+    else:
+        cached = _cache_get(_jwks_lock, _jwks_cache, jwks_uri)
+        if cached is not None:
+            return cached
     data = _fetch_json(jwks_uri)
     if not isinstance(data, dict):
         raise OIDCAuthError("OIDC JWKS response was not a JSON object", status_code=502)
@@ -363,7 +384,13 @@ def _validate_id_token(
     if not alg or alg == "none":
         raise OIDCAuthError("OIDC id_token uses an unsupported signing algorithm")
     jwks = _get_jwks_document(jwks_uri)
-    public_key = _select_public_key(jwks, header)
+    try:
+        public_key = _select_public_key(jwks, header)
+    except OIDCAuthError as exc:
+        if "did not contain the signing key" not in str(exc):
+            raise
+        jwks = _get_jwks_document(jwks_uri, force_refresh=True)
+        public_key = _select_public_key(jwks, header)
     _verify_jwt_signature(public_key, alg, signed, signature)
     _validate_registered_claims(claims, client_id=client_id, issuer=issuer, nonce=nonce)
     if not str(claims.get("sub") or "").strip():
@@ -453,17 +480,25 @@ def _verify_jwt_signature(public_key, alg: str, signed: bytes, signature: bytes)
             public_key.verify(signature, signed, padding.PKCS1v15(), hashes.SHA512())
             return
         if alg == "ES256":
-            public_key.verify(signature, signed, ec.ECDSA(hashes.SHA256()))
+            public_key.verify(_jose_ecdsa_signature_to_der(signature, 32), signed, ec.ECDSA(hashes.SHA256()))
             return
         if alg == "ES384":
-            public_key.verify(signature, signed, ec.ECDSA(hashes.SHA384()))
+            public_key.verify(_jose_ecdsa_signature_to_der(signature, 48), signed, ec.ECDSA(hashes.SHA384()))
             return
         if alg == "ES512":
-            public_key.verify(signature, signed, ec.ECDSA(hashes.SHA512()))
+            public_key.verify(_jose_ecdsa_signature_to_der(signature, 66), signed, ec.ECDSA(hashes.SHA512()))
             return
     except InvalidSignature as exc:
         raise OIDCAuthError("OIDC id_token signature verification failed") from exc
     raise OIDCAuthError(f"Unsupported OIDC signing algorithm: {alg}", status_code=502)
+
+
+def _jose_ecdsa_signature_to_der(signature: bytes, part_size: int) -> bytes:
+    if len(signature) != part_size * 2:
+        raise OIDCAuthError("OIDC id_token ECDSA signature was malformed")
+    r = int.from_bytes(signature[:part_size], "big")
+    s = int.from_bytes(signature[part_size:], "big")
+    return utils.encode_dss_signature(r, s)
 
 
 def _validate_registered_claims(
