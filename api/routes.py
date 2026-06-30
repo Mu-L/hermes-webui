@@ -17624,9 +17624,7 @@ def _start_chat_stream_for_session(
     diag.stage("worker_thread_start") if diag else None
     backend_is_gateway = webui_gateway_chat_enabled(get_config())
     worker_target = _run_gateway_chat_streaming if backend_is_gateway else _run_agent_streaming
-    worker_kwargs = {"model_provider": model_provider}
-    if not backend_is_gateway:
-        worker_kwargs["goal_related"] = goal_related
+    worker_kwargs = {"model_provider": model_provider, "goal_related": goal_related}
     if moa_config and not backend_is_gateway:
         worker_kwargs["moa_config"] = moa_config
     thr = threading.Thread(
