@@ -54,6 +54,7 @@ This gives you nearly **1:1 parity with Hermes CLI from a convenient web UI** wh
 - [Quick start](#quick-start) — clone + `bootstrap.py` / `start.sh` / `ctl.sh`
 - [Features](#features) — chat, sessions, workspace, voice, profiles, security, themes, panels, mobile
 - [Configuration & access](#configuration--access) — auto-discovery, overrides, remote/Tailscale/phone, manual launch
+- [Nix flake/module](#nix-flake-and-nixos-module) — declarative install and service
 - [Docker](#docker) — single- and multi-container deploys
 - [Running tests](#running-tests)
 - [Architecture](#architecture) — backend/frontend layout, state dir
@@ -377,6 +378,63 @@ Full list of environment variables:
 Extension deployments can inspect sanitized, authenticated diagnostics at `GET /api/extensions/status`; see [WebUI Extensions](docs/EXTENSIONS.md#diagnostics).
 
 ---
+
+### Nix flake and NixOS module
+
+Hermes WebUI has a Nix flake package and a NixOS service module so you can run it declaratively.
+
+Install the latest package with:
+
+```bash
+nix shell github:nesquena/hermes-webui#default
+```
+
+Use this flake input in your system configuration:
+
+```nix
+inputs.hermes-webui.url = "github:nesquena/hermes-webui";
+```
+
+Then add the module and configure it in `nixosModules`:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    hermes-webui.url = "github:nesquena/hermes-webui";
+  };
+
+  outputs = { self, nixpkgs, hermes-webui, ... }: {
+    nixosConfigurations.<host> = nixpkgs.lib.nixosSystem {
+      modules = [
+        hermes-webui.nixosModules.default
+      ];
+    };
+  };
+}
+```
+
+Service example:
+
+```nix
+services.hermes-webui = {
+  enable = true;
+  host = "0.0.0.0";
+  port = 8787;
+  stateDir = "/var/lib/hermes-webui";
+  agent.dir = "/var/lib/hermes/hermes-agent";
+  environmentFiles = [ "/run/secrets/hermes-webui.env" ];
+};
+```
+
+Keep the module default host at `127.0.0.1`. Set `host = "0.0.0.0"` only when you also provide auth, for example `HERMES_WEBUI_PASSWORD` via `environmentFiles`.
+
+You can also set `agent.package` instead of `agent.dir` when you are using a compatible Hermes Agent package layout. The module derives `HERMES_WEBUI_AGENT_DIR` from `<pkg>/share/hermes-agent` and sets `HERMES_WEBUI_PYTHON` from the package's `passthru.hermesVenv` interpreter so bootstrap can use agent dependencies without creating a local `.venv`.
+
+The module maps directly onto existing WebUI environment variables, including:
+`HERMES_WEBUI_HOST`, `HERMES_WEBUI_PORT`, `HERMES_WEBUI_STATE_DIR`, `HERMES_HOME`, `HERMES_WEBUI_AGENT_DIR`, and `HERMES_WEBUI_PYTHON`.
+
+Set `environmentFiles` for secrets like API keys. Protected WebUI runtime keys from the module are rejected there, so keep host, port, state, and agent wiring in the module options. Keep reverse proxy and TLS configuration in your surrounding deployment module because those details are deployment-specific.
 
 ### Remote access (SSH tunnel, Tailscale, phone)
 

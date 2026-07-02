@@ -1,0 +1,201 @@
+{ self }:
+{ config, lib, pkgs, ... }:
+
+let
+  cfg = config.services.hermes-webui;
+  defaultPackage = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+  defaultStateDir = "/var/lib/hermes-webui";
+
+  protectedEnvironment = [
+    "HERMES_WEBUI_HOST"
+    "HERMES_WEBUI_PORT"
+    "HERMES_WEBUI_STATE_DIR"
+    "HERMES_HOME"
+    "HERMES_WEBUI_AGENT_DIR"
+    "HERMES_WEBUI_PYTHON"
+  ];
+
+  protectedEnvironmentFileCheck = pkgs.writeShellScript "hermes-webui-protected-envfile-check" ''
+    set -eu
+    for env_file in "$@"; do
+      [ -f "$env_file" ] || continue
+      while IFS= read -r raw_line || [ -n "$raw_line" ]; do
+        line=$(printf '%s' "$raw_line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        case "$line" in
+          ""|\#*) continue ;;
+          export\ *) line=''${line#export } ;;
+        esac
+        key=''${line%%=*}
+        case "$key" in
+          HERMES_WEBUI_HOST|HERMES_WEBUI_PORT|HERMES_WEBUI_STATE_DIR|HERMES_HOME|HERMES_WEBUI_AGENT_DIR|HERMES_WEBUI_PYTHON)
+            echo "environmentFiles must not set protected WebUI runtime key $key; use module options or extraEnvironment for supported keys." >&2
+            exit 1
+            ;;
+        esac
+      done < "$env_file"
+    done
+  '';
+
+  inferredAgentPython =
+    if cfg.agent.package == null then
+      null
+    else if (cfg.agent.package ? passthru) && (cfg.agent.package.passthru ? hermesVenv) then
+      "${cfg.agent.package.passthru.hermesVenv}/bin/python3"
+    else
+      null;
+
+  inferredAgentDir =
+    if cfg.agent.package == null then
+      null
+    else
+      "${cfg.agent.package}/share/hermes-agent";
+
+  mappedEnvironment = (lib.mapAttrsToList
+    (name: value: "${name}=${value}")
+    ({
+      HERMES_WEBUI_HOST = cfg.host;
+      HERMES_WEBUI_PORT = toString cfg.port;
+      HERMES_WEBUI_STATE_DIR = cfg.stateDir;
+    }
+    // lib.optionalAttrs (cfg.hermesHome != null) {
+      HERMES_HOME = cfg.hermesHome;
+    }
+    // lib.optionalAttrs (cfg.agent.dir != null) {
+      HERMES_WEBUI_AGENT_DIR = cfg.agent.dir;
+    }
+    // lib.optionalAttrs (cfg.agent.dir == null && inferredAgentDir != null) {
+      HERMES_WEBUI_AGENT_DIR = inferredAgentDir;
+    }
+    // lib.optionalAttrs (cfg.agent.dir == null && inferredAgentPython != null) {
+      HERMES_WEBUI_PYTHON = inferredAgentPython;
+    }
+    // lib.filterAttrs
+      (name: _: !(lib.elem name protectedEnvironment))
+      cfg.extraEnvironment));
+
+  needsWritableStateDir = cfg.stateDir != defaultStateDir;
+  writableServiceDirs =
+    lib.optionals needsWritableStateDir [ cfg.stateDir ]
+    ++ lib.optionals (cfg.hermesHome != null) [ cfg.hermesHome ];
+
+  userspaceDirs = lib.optionals (cfg.hermesHome != null) [
+    "d ${cfg.hermesHome} 2770 ${cfg.user} ${cfg.group} - -"
+  ];
+
+  tmpfilesRules =
+    (lib.optionals needsWritableStateDir [
+      "d ${cfg.stateDir} 2770 ${cfg.user} ${cfg.group} - -"
+    ])
+    ++ userspaceDirs;
+in
+{
+  options.services.hermes-webui = {
+    enable = lib.mkEnableOption "Hermes WebUI service";
+
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = defaultPackage;
+      defaultText = lib.literalExpression "self.packages.${pkgs.stdenv.hostPlatform.system}.default";
+      description = "Package that provides the `bin/hermes-webui` executable.";
+    };
+
+    user = lib.mkOption {
+      type = lib.types.str;
+      default = "hermes-webui";
+      description = "User that runs the Hermes WebUI service.";
+    };
+
+    group = lib.mkOption {
+      type = lib.types.str;
+      default = "hermes-webui";
+      description = "Group that runs the Hermes WebUI service.";
+    };
+
+    host = lib.mkOption {
+      type = lib.types.str;
+      default = "127.0.0.1";
+      description = "Value for HERMES_WEBUI_HOST.";
+    };
+
+    port = lib.mkOption {
+      type = lib.types.port;
+      default = 8787;
+      description = "Value for HERMES_WEBUI_PORT.";
+    };
+
+    stateDir = lib.mkOption {
+      type = lib.types.strMatching "^/.+";
+      default = defaultStateDir;
+      defaultText = lib.literalExpression ''"/var/lib/hermes-webui"'';
+      description = "Value for HERMES_WEBUI_STATE_DIR.";
+    };
+
+    hermesHome = lib.mkOption {
+      type = lib.types.nullOr (lib.types.strMatching "^/.+");
+      default = null;
+      description = "Optional value for HERMES_HOME.";
+    };
+
+    agent = {
+      package = lib.mkOption {
+        type = lib.types.nullOr lib.types.package;
+        default = null;
+        description = "Package to derive HERMES_WEBUI_AGENT_DIR from when `agent.dir` is unset.";
+      };
+
+      dir = lib.mkOption {
+        type = lib.types.nullOr (lib.types.strMatching "^/.+");
+        default = null;
+        description = "Explicit path for HERMES_WEBUI_AGENT_DIR.";
+      };
+    };
+
+    environmentFiles = lib.mkOption {
+      type = lib.types.listOf (lib.types.strMatching "^/.+");
+      default = [ ];
+      description = "Paths with extra environment variables for the service, including API keys. Protected WebUI runtime keys from module options are rejected here.";
+    };
+
+    extraEnvironment = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      description = "Additional environment entries for the service. Required WebUI variables remain enforced.";
+    };
+  };
+
+  config = lib.mkIf cfg.enable {
+    systemd.services.hermes-webui = {
+      description = "Hermes Web UI service";
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      wantedBy = [ "multi-user.target" ];
+
+      serviceConfig =
+        {
+          Type = "simple";
+          User = cfg.user;
+          Group = cfg.group;
+          ExecStartPre = lib.optional (cfg.environmentFiles != [ ]) "${protectedEnvironmentFileCheck} ${lib.escapeShellArgs (map builtins.toString cfg.environmentFiles)}";
+          ExecStart = "${cfg.package}/bin/hermes-webui";
+          Restart = "on-failure";
+          Environment = mappedEnvironment;
+          EnvironmentFile = map builtins.toString cfg.environmentFiles;
+          ReadWritePaths = map builtins.toString writableServiceDirs;
+        }
+        // lib.optionalAttrs (cfg.stateDir == defaultStateDir) {
+          StateDirectory = "hermes-webui";
+        };
+    };
+
+    users.groups.${cfg.group} = { };
+
+    users.users.${cfg.user} = {
+      isSystemUser = true;
+      group = cfg.group;
+      createHome = true;
+      home = cfg.stateDir;
+    };
+
+    systemd.tmpfiles.rules = tmpfilesRules;
+  };
+}
