@@ -26,6 +26,10 @@ def _make_state_db(path, *, sid="state_only_001", source="webui", messages=2):
     return sid
 
 
+def _write_index(path, entries):
+    (path / "_index.json").write_text(json.dumps(entries), encoding="utf-8")
+
+
 def test_recover_missing_sidecars_from_state_db_materializes_webui_row(tmp_path):
     sid = _make_state_db(tmp_path / "state.db")
 
@@ -42,6 +46,140 @@ def test_recover_missing_sidecars_from_state_db_materializes_webui_row(tmp_path)
     assert data["source_tag"] == "webui"
     assert data["session_source"] == "webui"
     assert [m["content"] for m in data["messages"]] == ["message 1", "message 2"]
+
+
+def test_recover_missing_sidecars_from_state_db_skips_deleted_webui_tombstone(tmp_path):
+    sid = _make_state_db(tmp_path / "state.db", sid="deleted_webui_001")
+    _write_index(tmp_path, [
+        {
+            "session_id": sid,
+            "source_tag": "webui",
+            "raw_source": "webui",
+            "session_source": "webui",
+        }
+    ])
+
+    result = recover_missing_sidecars_from_state_db(tmp_path, tmp_path / "state.db")
+
+    assert result["materialized"] == 0
+    assert not (tmp_path / f"{sid}.json").exists()
+
+
+def test_audit_reports_deleted_webui_tombstone_is_unsafe(tmp_path):
+    sid = _make_state_db(tmp_path / "state.db", sid="deleted_webui_001")
+    _write_index(tmp_path, [
+        {
+            "session_id": sid,
+            "source_tag": "webui",
+            "raw_source": "webui",
+            "session_source": "webui",
+        }
+    ])
+
+    report = audit_session_recovery(tmp_path, state_db_path=tmp_path / "state.db")
+
+    assert any(
+        item["session_id"] == sid
+        and item["kind"] == "state_db_deleted_webui_tombstone"
+        and item["category"] == "unsafe_to_repair"
+        and item["recommendation"] == "deleted_session_skipped"
+        for item in report["items"]
+    )
+    assert not any(
+        item["session_id"] == sid and item["kind"] == "state_db_missing_sidecar"
+        for item in report["items"]
+    )
+    assert not any(
+        item["session_id"] == sid and item["category"] == "repairable"
+        for item in report["items"]
+    )
+
+
+def test_recover_missing_sidecars_skips_durable_delete_tombstone_without_index(tmp_path, monkeypatch):
+    import api.models as _m
+
+    sid = _make_state_db(tmp_path / "state.db", sid="durable_deleted_001")
+    monkeypatch.setattr(_m, "SESSION_DIR", tmp_path)
+    _m._record_webui_deleted_session_tombstone(sid)
+
+    result = recover_missing_sidecars_from_state_db(tmp_path, tmp_path / "state.db")
+    report = audit_session_recovery(tmp_path, state_db_path=tmp_path / "state.db")
+
+    assert result["materialized"] == 0
+    assert not (tmp_path / f"{sid}.json").exists()
+    assert any(
+        item["session_id"] == sid
+        and item["kind"] == "state_db_deleted_webui_tombstone"
+        and item["category"] == "unsafe_to_repair"
+        and item["recommendation"] == "deleted_session_skipped"
+        for item in report["items"]
+    )
+    assert not any(
+        item["session_id"] == sid and item["category"] == "repairable"
+        for item in report["items"]
+    )
+
+
+def test_audit_skips_index_missing_file_when_durable_delete_tombstone_survives(tmp_path, monkeypatch):
+    import api.models as _m
+
+    sid = "durable_deleted_index_001"
+    _write_index(tmp_path, [
+        {
+            "session_id": sid,
+            "source_tag": "webui",
+            "raw_source": "webui",
+            "session_source": "webui",
+        }
+    ])
+    monkeypatch.setattr(_m, "SESSION_DIR", tmp_path)
+    _m._record_webui_deleted_session_tombstone(sid)
+
+    report = audit_session_recovery(tmp_path)
+
+    assert not any(
+        item["session_id"] == sid and item["kind"] == "index_missing_file"
+        for item in report["items"]
+    )
+    assert not any(
+        item["session_id"] == sid and item["category"] == "repairable"
+        for item in report["items"]
+    )
+
+
+def test_audit_skips_orphan_backup_when_durable_delete_tombstone_survives(tmp_path, monkeypatch):
+    import api.models as _m
+
+    sid = _make_state_db(tmp_path / "state.db", sid="durable_deleted_backup_001")
+    (tmp_path / f"{sid}.json.bak").write_text(
+        json.dumps(
+            {
+                "session_id": sid,
+                "messages": [{"role": "user", "content": "deleted"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(_m, "SESSION_DIR", tmp_path)
+    _m._record_webui_deleted_session_tombstone(sid)
+
+    report = audit_session_recovery(tmp_path, state_db_path=tmp_path / "state.db")
+
+    assert any(
+        item["session_id"] == sid
+        and item["kind"] == "state_db_deleted_webui_tombstone"
+        and item["category"] == "unsafe_to_repair"
+        and item["recommendation"] == "deleted_session_skipped"
+        for item in report["items"]
+    )
+    assert not any(
+        item["session_id"] == sid and item["kind"] == "orphan_backup"
+        for item in report["items"]
+    )
+    assert not any(
+        item["session_id"] == sid and item["category"] == "repairable"
+        for item in report["items"]
+    )
 
 
 def test_recover_missing_sidecars_from_state_db_skips_existing_sidecar(tmp_path):
@@ -90,6 +228,41 @@ def test_empty_state_db_webui_row_is_unsafe_not_materialized(tmp_path):
 
     assert result["materialized"] == 0
     assert not (tmp_path / f"{sid}.json").exists()
+
+
+def test_recover_missing_sidecars_from_state_db_ignores_subagent_row(tmp_path):
+    sid = _make_state_db(tmp_path / "state.db", sid="subagent_001", source="subagent")
+
+    result = recover_missing_sidecars_from_state_db(tmp_path, tmp_path / "state.db")
+
+    assert result["materialized"] == 0
+    assert not (tmp_path / f"{sid}.json").exists()
+
+    report = audit_session_recovery(tmp_path, state_db_path=tmp_path / "state.db")
+    assert not any(item["session_id"] == sid for item in report["items"])
+
+
+def test_recover_missing_sidecars_from_state_db_ignores_read_only_index_row(tmp_path):
+    sid = _make_state_db(tmp_path / "state.db", sid="read_only_index_001")
+    _write_index(tmp_path, [
+        {
+            "session_id": sid,
+            "source_tag": "",
+            "raw_source": "",
+            "session_source": "",
+            "read_only": True,
+        }
+    ])
+
+    result = recover_missing_sidecars_from_state_db(tmp_path, tmp_path / "state.db")
+
+    assert result["materialized"] == 1
+    sidecar = tmp_path / f"{sid}.json"
+    assert sidecar.exists()
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert data["session_id"] == sid
+    assert data["source_tag"] == "webui"
+    assert data["session_source"] == "webui"
 
 
 def test_materialized_sidecar_round_trips_through_session_load(tmp_path, monkeypatch):
