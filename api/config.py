@@ -2563,6 +2563,30 @@ def resolve_model_provider(model_id: str) -> tuple:
                 provider_hint = _custom_provider_slug_from_name(entry_name)
                 return model_id, provider_hint, entry_base_url or None
 
+    # Check user-defined providers (config.yaml → providers:).
+    # Mirrors the custom_providers scan above — exact match against each
+    # entry's declared models list (case-sensitive to match custom_providers).
+    providers_cfg = cfg.get('providers', {})
+    if isinstance(providers_cfg, dict):
+        target = model_id.strip()
+        for slug, pdef in providers_cfg.items():
+            if not isinstance(pdef, dict):
+                continue
+            p_models = pdef.get('models')
+            if isinstance(p_models, list):
+                for m in p_models:
+                    mid = str(m.get('id') or '') if isinstance(m, dict) else str(m or '')
+                    if not mid:
+                        continue
+                    if mid.strip() == target:
+                        p_base_url = str(pdef.get('base_url') or '').strip()
+                        return model_id, slug, p_base_url or None
+            elif isinstance(p_models, dict):
+                for mid in p_models:
+                    if isinstance(mid, str) and mid.strip() == target:
+                        p_base_url = str(pdef.get('base_url') or '').strip()
+                        return model_id, slug, p_base_url or None
+
     # @provider:model format — explicit provider hint from the dropdown.
     # Route through that provider directly (resolve_runtime_provider will
     # resolve credentials in streaming.py).
