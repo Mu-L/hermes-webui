@@ -86,17 +86,28 @@ function _composerDraftPayloadSignatureForSid(sid) {
 function _suppressComposerDraftRestoreAfterSubmit(sid, text, files) {
   if (!sid) return;
   const previous = _composerDraftRestoreSuppressedUntilBySid.get(sid);
-  let signature = null;
+  // Collect EVERY signature a stale poll could legitimately echo back for this
+  // just-sent turn, and suppress a restore matching ANY of them (#5471):
+  //  - the submitted-payload signature (final textarea content on send), AND
+  //  - the REMEMBERED SERVER DRAFT signature — what was actually persisted last.
+  // The two differ in the common Enter-to-send case: `_clearComposerDraft`
+  // cancels the pending debounced save, so the server's last draft is often a
+  // PREFIX of the submitted text (pause ≥400ms, then send within 400ms of the
+  // last keystroke) — an exact submitted-text match would miss that prefix and
+  // let it restore. The remembered-server-draft signature must be read BEFORE
+  // the `_rememberComposerDraftPayloadState(sid,'',[])` reset below. A genuinely
+  // new cross-tab draft matches neither, so it still restores immediately.
+  const signatures = [];
+  const _addSig = (s) => { if (s && signatures.indexOf(s) === -1) signatures.push(s); };
+  _addSig(_composerDraftPayloadSignatureForSid(sid));   // remembered server draft (read first)
   if (arguments.length >= 2) {
-    signature = _composerDraftPayloadSignature(text, files);
-  } else if (previous && typeof previous === 'object') {
-    signature = previous.signature || null;
-  } else {
-    signature = _composerDraftPayloadSignatureForSid(sid);
+    _addSig(_composerDraftPayloadSignature(text, files));  // submitted payload
+  } else if (previous && typeof previous === 'object' && Array.isArray(previous.signatures)) {
+    previous.signatures.forEach(_addSig);
   }
   _composerDraftRestoreSuppressedUntilBySid.set(
     sid,
-    { until: Date.now() + _COMPOSER_DRAFT_RESTORE_SUPPRESS_MS, signature },
+    { until: Date.now() + _COMPOSER_DRAFT_RESTORE_SUPPRESS_MS, signatures },
   );
   // Local state must reflect the submitted/cleared composer immediately. The
   // POST that clears the server-side draft is async; same-session refreshes can
@@ -119,11 +130,13 @@ function _isComposerDraftRestoreSuppressed(sid, text, files) {
     _composerDraftRestoreSuppressedUntilBySid.delete(sid);
     return false;
   }
-  const signature = (suppression && typeof suppression === 'object') ? suppression.signature : null;
+  const signatures = (suppression && typeof suppression === 'object' && Array.isArray(suppression.signatures))
+    ? suppression.signatures
+    : null;
   // Legacy/unknown callers still fail closed for the current TTL, but all send
-  // paths now pass a payload signature so a different cross-tab draft can restore.
-  if (!signature) return true;
-  if (_composerDraftPayloadSignature(text, files) === signature) return true;
+  // paths now pass payload signatures so a different cross-tab draft can restore.
+  if (!signatures || !signatures.length) return true;
+  if (signatures.indexOf(_composerDraftPayloadSignature(text, files)) !== -1) return true;
   _composerDraftRestoreSuppressedUntilBySid.delete(sid);
   return false;
 }

@@ -44,7 +44,7 @@ def _draft_restore_suppression_block() -> str:
     return SESSIONS_JS[start:end]
 
 
-def _run_case(*, initial_text: str, draft: dict | None, opts: dict | None, current_sid, force_reload: bool, suppress_restore: bool | dict = False) -> dict:
+def _run_case(*, initial_text: str, draft: dict | None, opts: dict | None, current_sid, force_reload: bool, suppress_restore: bool | dict = False, remembered_server_draft: dict | None = None) -> dict:
     if NODE is None:
         pytest.skip("node not on PATH")
     restore_fn = _function_block(SESSIONS_JS, "function _restoreComposerDraft(draft, targetSid, opts={}) {")
@@ -60,6 +60,12 @@ def _run_case(*, initial_text: str, draft: dict | None, opts: dict | None, curre
         suppress_call = "_suppressComposerDraftRestoreAfterSubmit(sid);"
     else:
         suppress_call = ""
+    # At SEND time the session's composer_draft holds what was last persisted to
+    # the server (the prefix/old draft), which the dual-signature suppression
+    # reads. That is DISTINCT from the draft a later stale/cross-tab poll echoes
+    # back for restore. Seed the send-time remembered draft separately, then swap
+    # in the restore draft before _restoreComposerDraft runs.
+    send_time_draft = remembered_server_draft if remembered_server_draft is not None else draft
     script = f"""
 const state = {{
   value: {json.dumps(initial_text)},
@@ -80,7 +86,7 @@ const sid = 'boot-session';
 const S = {{
   session: {{
     session_id: sid,
-    composer_draft: {json.dumps(draft)},
+    composer_draft: {json.dumps(send_time_draft)},
   }},
 }};
 const currentSid = {json.dumps(current_sid)};
@@ -91,9 +97,15 @@ function _composerDraftHasPayload(text, files) {{
 }}
 function _rememberComposerDraftPayloadState(sid, text, files) {{
   state.rememberedDraft = {{sid, text, files}};
+  if (S.session && S.session.session_id === sid) {{
+    S.session.composer_draft = {{text, files}};
+  }}
 }}
 {suppression_block}
 {suppress_call}
+// After send-time suppression is captured, the stale/cross-tab poll delivers a
+// (possibly different) draft that restore will evaluate.
+S.session.composer_draft = {json.dumps(draft)};
 {restore_fn}
 {draft_block}
 process.stdout.write(JSON.stringify({{
@@ -163,9 +175,31 @@ def test_same_session_submitted_clear_blocks_stale_server_draft_restore():
         opts={"preserveActiveInput": True},
         current_sid="boot-session",
         force_reload=True,
+        remembered_server_draft={"text": "old submitted suffix", "files": []},
         suppress_restore={"text": "old submitted suffix", "files": []},
     )
     assert data["value"] == ""
+    assert data["autoResizeCount"] == 0
+    assert data["updateSendBtnCount"] == 0
+
+
+def test_same_session_submitted_clear_blocks_stale_prefix_server_draft_restore():
+    """#5471 (Opus Finding 1): the server's last persisted draft is often a PREFIX
+    of the submitted text (Enter-to-send within 400ms of a keystroke cancels the
+    pending debounced save), so an exact-match on the submitted text would miss it.
+    The dual signature also captures the remembered SERVER draft, so the stale
+    prefix is suppressed.
+    """
+    data = _run_case(
+        initial_text="",
+        draft={"text": "hello worl", "files": []},          # stale prefix echoed back
+        opts={"preserveActiveInput": True},
+        current_sid="boot-session",
+        force_reload=True,
+        remembered_server_draft={"text": "hello worl", "files": []},  # server had the prefix
+        suppress_restore={"text": "hello world!", "files": []},        # user sent the full text
+    )
+    assert data["value"] == "", "stale prefix of the just-sent text must be suppressed"
     assert data["autoResizeCount"] == 0
     assert data["updateSendBtnCount"] == 0
 
@@ -178,6 +212,7 @@ def test_same_session_submitted_clear_allows_different_cross_tab_draft_restore()
         opts={"preserveActiveInput": True},
         current_sid="boot-session",
         force_reload=True,
+        remembered_server_draft={"text": "old submitted suffix", "files": []},
         suppress_restore={"text": "old submitted suffix", "files": []},
     )
     assert data["value"] == "new cross-tab draft"
