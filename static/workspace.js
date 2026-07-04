@@ -1216,24 +1216,23 @@ function openInBrowser(){
 }
 // openInBrowser keeps the helper-based raw path, which expands to an explicit &inline=1 URL.
 
-async function copyPreviewFilePath(){
-  if(!_previewCurrentPath||!S.session) return;
-  const btn=$('btnCopyPreviewPath');
+async function copyPreviewRelativePath(){
+  if(!_previewCurrentPath) return;
+  const btn=$('btnCopyPreviewRelPath');
   if(btn&&btn.disabled) return;
   if(btn) btn.disabled=true;
   try{
-    const r=await api('/api/file/path',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:_previewCurrentPath})});
-    const abs=(r&&r.path)||_previewCurrentPath;
+    const rel=_normalizeWorkspaceRelPath(_previewCurrentPath)||_previewCurrentPath;
     if(typeof _copyTextWithFallback==='function'){
-      await _copyTextWithFallback(abs,t('path_copied'),t('path_copy_failed'));
+      await _copyTextWithFallback(rel,t('path_copied'),t('path_copy_failed'));
       return;
     }
     try{
-      await navigator.clipboard.writeText(abs);
+      await navigator.clipboard.writeText(rel);
       showToast(t('path_copied'));
     }catch(clipErr){
       const ta=document.createElement('textarea');
-      ta.value=abs;
+      ta.value=rel;
       ta.style.cssText='position:fixed;left:-9999px;top:-9999px;';
       document.body.appendChild(ta);
       ta.select();

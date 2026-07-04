@@ -17301,6 +17301,22 @@ function _showFileContextMenu(e, item){
       }
     };
     menu.appendChild(copyPathItem);
+
+    const copyRelPathItem=document.createElement('div');
+    copyRelPathItem.textContent=t('copy_relative_path');
+    copyRelPathItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+    copyRelPathItem.onmouseenter=()=>copyRelPathItem.style.background='var(--hover-bg)';
+    copyRelPathItem.onmouseleave=()=>copyRelPathItem.style.background='';
+    copyRelPathItem.onclick=async()=>{
+      menu.remove();
+      try{
+        const rel=_normalizeWorkspaceRelPath(item.path)||item.path;
+        await _copyTextWithFallback(rel,t('path_copied'),t('path_copy_failed'));
+      }catch(err){
+        showToast(t('path_copy_failed')+(err.message||err));
+      }
+    };
+    menu.appendChild(copyRelPathItem);
   }
 
   if(isDirLike){

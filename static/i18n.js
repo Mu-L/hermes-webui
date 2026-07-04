@@ -484,6 +484,7 @@ const LOCALES = {
      reveal_in_finder: 'Reveal in File Manager',
      reveal_failed: 'Failed to reveal: ',
      copy_file_path: 'Copy file path',
+     copy_relative_path: 'Copy relative path',
      open_in_vscode: 'Open in VS Code',
      open_in_vscode_failed: 'Failed to open in VS Code: ',
      download_folder: 'Download Folder',
