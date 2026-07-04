@@ -82,14 +82,12 @@ let _streamFadeLastTargetWords=0;
 let _streamFadeLastArrivalMs=0;
 let _streamFadeArrivalWps=0;
 let _streamFadeLatestAnimationEndAt=0;
-let _streamFadeAppendOffset=0;
 let _streamFadeVisibleWords=0;
 let _streamFadeHoldUntilMs=0;
 let _streamFadeCurrentMs=200;
 let _streamFadeDomText='';
 const _STREAM_FADE_MS=200;
 const _STREAM_FADE_MAX_MS=350;
-const _STREAM_FADE_STAGGER_MS=16;
 const _STREAM_FADE_DONE_MAX_MS=320;
 const _STREAM_FADE_DONE_DRAIN_MAX_MS=900;
 const performance={performance_stub};
@@ -202,6 +200,9 @@ def test_stream_fade_uses_incremental_renderer_without_changing_default_path():
         ["animationend", "span.replaceWith(document.createTextNode"],
     )
     assert "_wrapStreamingFadeWords" not in MESSAGES_JS
+    assert "animationDelay" not in renderer_block
+    assert "_STREAM_FADE_STAGGER_MS" not in MESSAGES_JS
+    assert "_streamFadeAppendOffset" not in MESSAGES_JS
 
 
 def test_stream_fade_appends_new_spans_without_replacing_existing_nodes():
@@ -209,8 +210,6 @@ def test_stream_fade_appends_new_spans_without_replacing_existing_nodes():
         function_block(MESSAGES_JS, "_streamFadeAppendText")
         + r"""
 const _STREAM_FADE_MS=200;
-const _STREAM_FADE_STAGGER_MS=16;
-let _streamFadeAppendOffset=0;
 let _streamFadeLatestAnimationEndAt=0;
 let _streamFadeCurrentMs=200;
 const performance={_t:0,now(){return this._t;}};

@@ -2543,7 +2543,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
   let _streamFadeLastArrivalMs=0;
   let _streamFadeArrivalWps=0;
   let _streamFadeLatestAnimationEndAt=0;
-  let _streamFadeAppendOffset=0;
   let _streamFadeVisibleWords=0;
   let _streamFadeHoldUntilMs=0;
   let _streamFadeCurrentMs=200;
@@ -2560,7 +2559,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
   let _lastRunJournalEventId='';
   const _STREAM_FADE_MS=200;
   const _STREAM_FADE_MAX_MS=350;
-  const _STREAM_FADE_STAGGER_MS=16;
   const _STREAM_FADE_DONE_MAX_MS=320;
   const _STREAM_FADE_DONE_DRAIN_MAX_MS=900;
   const _anchorApi=(typeof window!=='undefined'&&window.HermesAssistantTurnAnchors)
@@ -4088,7 +4086,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
     _streamFadeLastArrivalMs=0;
     _streamFadeArrivalWps=0;
     _streamFadeLatestAnimationEndAt=0;
-    _streamFadeAppendOffset=0;
     _streamFadeVisibleWords=0;
     _streamFadeHoldUntilMs=0;
     _streamFadeCurrentMs=_STREAM_FADE_MS;
@@ -4162,13 +4159,10 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
         const span=document.createElement('span');
         span.className='stream-fade-word is-new';
         const fadeMs=_streamFadeCurrentMs||_STREAM_FADE_MS;
-        const delayMs=_streamFadeAppendOffset*_STREAM_FADE_STAGGER_MS;
-        span.style.animationDelay=delayMs+'ms';
         if(fadeMs!==_STREAM_FADE_MS) span.style.setProperty('--stream-fade-ms',fadeMs+'ms');
         span.textContent=match[1];
         frag.appendChild(span);
-        _streamFadeAppendOffset+=1;
-        _streamFadeLatestAnimationEndAt=Math.max(_streamFadeLatestAnimationEndAt,appendStartedAt+delayMs+fadeMs);
+        _streamFadeLatestAnimationEndAt=Math.max(_streamFadeLatestAnimationEndAt,appendStartedAt+fadeMs);
         if(match[2]) frag.appendChild(document.createTextNode(match[2]));
         last=match.index+match[0].length;
         changed=true;
@@ -4241,7 +4235,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
     const wordRe=/(\S+)(\s*)/g;
     const appendStartedAt=performance.now();
     let last=0, match, changed=false;
-    _streamFadeAppendOffset=0;
     while((match=wordRe.exec(value))){
       if(match.index>last) frag.appendChild(document.createTextNode(value.slice(last,match.index)));
       if(reduceMotion){
@@ -4250,13 +4243,10 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
         const span=document.createElement('span');
         span.className='stream-fade-word is-new';
         const fadeMs=_streamFadeCurrentMs||_STREAM_FADE_MS;
-        const delayMs=_streamFadeAppendOffset*_STREAM_FADE_STAGGER_MS;
-        span.style.animationDelay=delayMs+'ms';
         if(fadeMs!==_STREAM_FADE_MS) span.style.setProperty('--stream-fade-ms',fadeMs+'ms');
         span.textContent=match[1];
         frag.appendChild(span);
-        _streamFadeAppendOffset+=1;
-        _streamFadeLatestAnimationEndAt=Math.max(_streamFadeLatestAnimationEndAt,appendStartedAt+delayMs+fadeMs);
+        _streamFadeLatestAnimationEndAt=Math.max(_streamFadeLatestAnimationEndAt,appendStartedAt+fadeMs);
       }
       if(match[2]) frag.appendChild(document.createTextNode(match[2]));
       last=match.index+match[0].length;
