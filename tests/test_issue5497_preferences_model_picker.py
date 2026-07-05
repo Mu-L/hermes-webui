@@ -99,3 +99,41 @@ def test_preferences_picker_refreshes_existing_save_and_dirty_contracts():
     assert "await api('/api/default-model',{method:'POST',body:JSON.stringify({model,provider:modelState.model_provider||null})});" in save_body
     assert "settingsModelDropdown" in refresh_body
     assert "selectModel:selectSettingsModelFromDropdown" in refresh_body
+
+
+def test_preferences_picker_ux_fixes_label_touchfocus_shadow():
+    """Fable SHIP-WITH-UX-FIXES fold-in (#5502):
+    (1) the field label targets the interactive chip, not the hidden native select;
+    (2) the search auto-focus is skipped on coarse-pointer (no mobile keyboard pop);
+    (3) the downward-opening Preferences dropdown casts its shadow downward.
+    """
+    # (1) label association -> the visible/interactive chip
+    assert 'for="settingsModelChip"' in INDEX_HTML
+    assert 'for="settingsModel"' not in INDEX_HTML  # no longer points at the hidden select
+
+    # (2) coarse-pointer guard around the search auto-focus in the settings open path,
+    #     passed through to renderModelDropdown so its OWN initial focus is suppressed too.
+    open_body = _function_body(UI_JS, "openSettingsModelDropdown")
+    assert "matchMedia('(pointer: coarse)')" in open_body
+    assert "autoFocusSearch:!_coarsePointer" in open_body
+    guard_idx = open_body.index("matchMedia('(pointer: coarse)')")
+    render_idx = open_body.index("renderModelDropdown(")
+    assert guard_idx < render_idx, "coarse-pointer must be computed before the render call"
+    # renderModelDropdown honors the option and defaults it true (composer unchanged).
+    render_body = _function_body(UI_JS, "renderModelDropdown")
+    assert "opts.autoFocusSearch!==false" in render_body
+    assert "if(_autoFocusSearch||_hadFocus) _si.focus();" in render_body
+    # Focus is still restored during typing (touch user in the search) — the
+    # suppression must NOT drop focus mid-word on the per-keystroke re-render.
+    assert "document.activeElement===_si" in render_body
+    # The OPEN-picker refresh path (late live-model fetch) must also suppress focus
+    # on touch for the settings branch, or the keyboard pops after opening.
+    refresh_body = _function_body(UI_JS, "_refreshOpenModelDropdown")
+    settings_branch = refresh_body[refresh_body.index("settingsModelDropdown"):]
+    assert "autoFocusSearch:!_coarsePointer" in settings_branch
+    assert "matchMedia('(pointer: coarse)')" in settings_branch
+
+    # (3) downward shadow override on the settings dropdown block
+    block_start = STYLE_CSS.index(".settings-model-dropdown{")
+    block = STYLE_CSS[block_start : STYLE_CSS.index("}", block_start) + 1]
+    assert "box-shadow:0 4px 24px" in block, "settings dropdown should cast its shadow downward"

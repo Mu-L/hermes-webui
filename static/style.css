@@ -4899,6 +4899,9 @@ main.main > #mainPlugin{display:none;}
   max-width:100%;
   max-height:360px;
   z-index:260;
+  /* This picker opens DOWNWARD (top:100%), unlike the composer picker which opens
+     upward; override the inherited upward shadow so it casts down toward the list. */
+  box-shadow:0 4px 24px rgba(0,0,0,.4);
 }
 .settings-model-dropdown .model-search-row{
   position:sticky;

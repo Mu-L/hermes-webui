@@ -2601,6 +2601,10 @@ function _refreshOpenModelDropdown(){
   }
   const sdd=$('settingsModelDropdown');
   if(sdd&&sdd.classList&&sdd.classList.contains('open')&&typeof renderModelDropdown==='function'){
+    // Re-rendering the OPEN settings picker (e.g. when a late live-model fetch
+    // resolves) must not re-grab search focus on touch — same coarse-pointer rule
+    // as openSettingsModelDropdown, or the mobile keyboard pops after opening.
+    const _coarsePointer=(typeof window.matchMedia==='function')&&window.matchMedia('(pointer: coarse)').matches;
     renderModelDropdown({
       dropdownId:'settingsModelDropdown',
       selectId:'settingsModel',
@@ -2608,6 +2612,7 @@ function _refreshOpenModelDropdown(){
       closeDropdown:closeSettingsModelDropdown,
       selectModel:selectSettingsModelFromDropdown,
       scopeNoteText:t('settings_desc_model')||'Used for new conversations. Existing conversations keep their selected model.',
+      autoFocusSearch:!_coarsePointer,
     });
   }
 }
@@ -3268,6 +3273,10 @@ function renderModelDropdown(){
   const dd=$(opts.dropdownId||'composerModelDropdown');
   const sel=$(opts.selectId||'modelSelect');
   if(!dd||!sel) return;
+  // Whether the search input should auto-grab focus on (re-)render. Default true
+  // preserves the composer picker's behavior exactly; the settings picker passes
+  // false on coarse-pointer devices so opening it doesn't pop the mobile keyboard.
+  const _autoFocusSearch=opts.autoFocusSearch!==false;
   const selectFromDropdown=typeof opts.selectModel==='function'
     ? opts.selectModel
     : (value,provider)=>selectModelFromDropdown(value,provider);
@@ -3545,6 +3554,10 @@ function renderModelDropdown(){
     return row;
   };
   const _filterModels=(term)=>{
+    // Preserve focus across the re-render if the search input already had it — so a
+    // touch user typing a query (where autoFocusSearch is suppressed to avoid the
+    // initial keyboard pop) doesn't lose focus mid-word on each keystroke re-render.
+    const _hadFocus=(typeof document!=='undefined')&&document.activeElement===_si;
     term=term.trim().toLowerCase();
     const hasSearch=!!term;
     // On a fresh search, expand all groups so every match is visible (#collapse).
@@ -3783,7 +3796,7 @@ function renderModelDropdown(){
       noResult.style.textAlign='center';
       dd.appendChild(noResult);
     }
-    _si.focus();
+    if(_autoFocusSearch||_hadFocus) _si.focus();
   };
   _si.addEventListener('input',()=>_filterModels(_si.value));
   // Keyboard navigation through filtered model rows (#2791).
@@ -3930,6 +3943,11 @@ function openSettingsModelDropdown(){
   const sel=$('settingsModel');
   const chip=$('settingsModelChip');
   if(!dd||!sel) return;
+  // Auto-focus the search on desktop only. On touch (coarse pointer) grabbing focus
+  // pops the on-screen keyboard the instant the chip is tapped — the composer picker
+  // doesn't do it either, so match that behavior on touch. Computed before render so
+  // renderModelDropdown's own initial focus is suppressed too (not just the outer one).
+  const _coarsePointer=(typeof window.matchMedia==='function')&&window.matchMedia('(pointer: coarse)').matches;
   renderModelDropdown({
     dropdownId:'settingsModelDropdown',
     selectId:'settingsModel',
@@ -3937,16 +3955,19 @@ function openSettingsModelDropdown(){
     closeDropdown:closeSettingsModelDropdown,
     selectModel:selectSettingsModelFromDropdown,
     scopeNoteText:t('settings_desc_model')||'Used for new conversations. Existing conversations keep their selected model.',
+    autoFocusSearch:!_coarsePointer,
   });
   dd.classList.add('open');
   if(chip){
     chip.classList.add('active');
     chip.setAttribute('aria-expanded','true');
   }
-  setTimeout(()=>{
-    const input=dd.querySelector('.model-search-input');
-    if(input) input.focus();
-  },0);
+  if(!_coarsePointer){
+    setTimeout(()=>{
+      const input=dd.querySelector('.model-search-input');
+      if(input) input.focus();
+    },0);
+  }
 }
 
 function toggleSettingsModelDropdown(){
