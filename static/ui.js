@@ -13457,6 +13457,22 @@ function _scrollAfterMessageRender(preserveScroll, scrollSnapshot){
     return;
   }
   if(S.activeStreamId){
+    // Mid-stream re-render (tool completion, activity-scene refresh, clarify echo).
+    // renderMessages() wipes #msgInner (inner.innerHTML='') then rebuilds; that wipe
+    // collapses scrollHeight toward the empty-table height, and the browser is FORCED
+    // to clamp #messages.scrollTop down to the new (near-zero) max. For a reader who
+    // scrolled UP into history (unpinned), scrollIfPinned() is a no-op — so it does NOT
+    // undo that clamp, and the reader is stranded at the top (the scroll jump-back). The
+    // wipe-to-empty clamp is a browser primitive (device-agnostic; JS never writes the
+    // scrollTop), so the passive no-op cannot preserve position here. renderMessages()
+    // captured a pre-wipe snapshot for exactly this case (its scrollSnapshot init fires
+    // when _messageUserUnpinned), so restore the unpinned reader's viewport instead of
+    // the no-op. Pinned/tail-following readers keep scrollIfPinned() (correct live-follow).
+    if(_messageUserUnpinned && scrollSnapshot){
+      _restoreMessageScrollSnapshot(scrollSnapshot);
+      _maybeShowNewMessageScrollCue(scrollSnapshot);
+      return;
+    }
     scrollIfPinned();
     return;
   }
