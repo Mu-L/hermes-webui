@@ -528,6 +528,11 @@ def _session_visible_to_active_profile(session_profile, handler=None) -> bool:
 def _request_session_visibility_exempt(method: str, path: str | None) -> bool:
     if not path:
         return False
+    if method == "GET" and path == "/api/session":
+        # Detail-load owns profile mismatch handling so the frontend can switch
+        # to the session's profile instead of treating a valid cross-profile
+        # deep link as a deleted/stale session.
+        return True
     if method != "POST":
         return False
     # Import routes create/claim sessions before normal ownership exists, and
@@ -11730,6 +11735,20 @@ def handle_get(handler, parsed) -> bool:
             s = get_session(sid, metadata_only=(not load_messages))
             _session_profile = getattr(s, 'profile', None) or None
             if not _session_visible_to_active_profile(_session_profile, handler):
+                if _session_profile:
+                    # Valid session owned by a KNOWN other profile: 409 so the
+                    # client can offer to switch to it (#5419).
+                    return j(handler, {
+                        "error": "Session belongs to a different profile",
+                        "code": "session_profile_mismatch",
+                        "session_id": sid,
+                        "profile": _session_profile,
+                    }, status=409)
+                # Unknown/legacy None-profile sidecar: keep the original 404 so
+                # the frontend's self-heal (clear stale URL + localStorage) still
+                # fires. _profiles_match coerces None->'default', so a truly
+                # missing/legacy session under a non-default active profile would
+                # otherwise emit a useless 409 with profile=null.
                 return bad(handler, "Session not found", 404)
             original_stream_id = getattr(s, "active_stream_id", None)
             _clear_stale_stream_state(s)
@@ -12061,6 +12080,20 @@ def handle_get(handler, parsed) -> bool:
             cli_meta = _lookup_cli_session_metadata(sid)
             _session_profile = (cli_meta or {}).get("profile") or None
             if not _session_visible_to_active_profile(_session_profile, handler):
+                if _session_profile:
+                    # Valid CLI/foreign session owned by a KNOWN other profile:
+                    # 409 so the client can offer to switch to it (#5419).
+                    return j(handler, {
+                        "error": "Session belongs to a different profile",
+                        "code": "session_profile_mismatch",
+                        "session_id": sid,
+                        "profile": _session_profile,
+                    }, status=409)
+                # Missing session (cli_meta={} -> profile=None): keep the 404
+                # self-heal path. _profiles_match coerces None->'default', so a
+                # truly-missing session under a non-default active profile would
+                # otherwise emit a useless 409 with profile=null and skip the
+                # frontend self-heal + spin the SSE reconnect against a dead sid.
                 return bad(handler, "Session not found", 404)
             synth, reason = _claim_or_synthesize_cli_session(sid, cli_meta=cli_meta or {})
             if reason == "was_webui":
