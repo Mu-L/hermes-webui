@@ -848,6 +848,7 @@ def _run_gateway_chat_streaming(
             saved_reasoning = STREAM_REASONING_TEXT.get(stream_id, "")
             if saved_reasoning:
                 assistant_msg["reasoning"] = saved_reasoning
+            previous_messages = list(getattr(s, "messages", None) or [])
             previous_context = list(getattr(s, "context_messages", None) or getattr(s, "messages", None) or [])
             # Stamp stable ids on the two new rows (shared with the display merge
             # below) so display and model-context copies share an id for the
@@ -875,7 +876,7 @@ def _run_gateway_chat_streaming(
                 logger.debug("Failed to filter gateway display context markers", exc_info=True)
                 display_context = previous_context
             display = merge_session_messages_append_only(
-                list(getattr(s, "messages", None) or []),
+                previous_messages,
                 display_context,
             )
             try:
@@ -907,6 +908,14 @@ def _run_gateway_chat_streaming(
             s.workspace = str(workspace)
             s.model = model
             s.model_provider = model_provider
+            # Recheck immediately before clearing the pause; Stop can arrive
+            # while the success transcript is being assembled.
+            if cancel_event.is_set():
+                s.context_messages = previous_context
+                s.messages = previous_messages
+                s.save()
+                put_gateway_event("cancel", {"message": "Cancelled by user"})
+                return
             clear_process_wakeup_pause(s, reason="run_completed")
             s.save()
         try:
