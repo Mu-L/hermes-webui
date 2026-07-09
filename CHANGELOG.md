@@ -5,6 +5,8 @@
 
 ### Fixed
 
+- **A background child stream no longer bumps its parent session to the top of the sidebar.** When a child (branched/background) stream was active, its activity re-sorted the parent session's sidebar time-bucket, yanking the parent around while you were working elsewhere. The sidebar sort no longer keys the parent's bucket off child-stream activity, so parents stay put. Thanks @rodboev. (#5729, #5699)
+
 - **The embedded terminal now recovers from a dropped connection instead of silently freezing.** A transport-level failure on the terminal's output stream (session expired, gateway restarted, network drop) fired an EventSource `error` with no handler, so the terminal froze with no feedback. It now shows a "connection lost, reconnecting…" / "disconnected" line, lets the browser auto-reconnect a recoverable connection, and tears down a permanently-closed one so a restart can reconnect — notifying once per outage so a flapping connection can't flood the pane. Thanks @ai-ag2026. (#5786)
 
 - **The OpenCode Go model picker now lists the current flat-rate catalog.** The static `opencode-go` model snapshot was stale; it's been re-synced from the public opencode.ai/go docs + models endpoint (adds MiniMax M3, Kimi K2.7 Code, GLM-5.2, Qwen 3.7 Max/Plus, and more), keeping preview/free-only Zen models out of the Go picker. Thanks @ai-ag2026. (#5761)
