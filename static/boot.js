@@ -675,6 +675,17 @@ function _micToastKeyForRecognitionError(error){
   let _finalText='';
   let _prefix='';
   let _isRecording=false;
+  // #5294 salvage — mobile composer-mic dictation continuity.
+  // _speechStopRequested distinguishes an intentional stop (send/toggle) from a
+  // natural pause so onend only auto-restarts on real pauses. _micWakeLock keeps
+  // the screen awake while dictating; _micWakeLockOp serializes acquire/release
+  // so rapid start/stop/visibility churn can't leak a lock. _micRestartCount is
+  // bounded by _micMaxRestarts to stop a tight loop if the audio session is stolen.
+  let _speechStopRequested=false;
+  let _micWakeLock=null;
+  let _micWakeLockOp=null;
+  let _micRestartCount=0;
+  const _micMaxRestarts=20;
   let _micHoldTimer=null;
   let _micHoldActive=false;
   let _micPointerDown=false;
@@ -802,6 +813,78 @@ function _micToastKeyForRecognitionError(error){
     }
   }
 
+  // Gate continuous dictation to MOBILE so desktop stays one-shot (single
+  // utterance). An explicit hermes-mic-continuous flag wins in both directions,
+  // mirroring the hermes-voice-continuous pattern: 'true' opts a desktop in,
+  // 'false' opts a mobile out. Absent a flag, coarse-pointer (touch) devices get
+  // continuity and everything else stays single-utterance.
+  function _micDictationContinuous(){
+    try{
+      const flag=localStorage.getItem('hermes-mic-continuous');
+      if(flag==='true') return true;
+      if(flag==='false') return false;
+    }catch(_){}
+    try{ return window.matchMedia('(pointer:coarse)').matches; }catch(_){ return false; }
+  }
+
+  // Only auto-restart the composer-mic session on a natural pause: continuity
+  // must be enabled (mobile/opt-in), the session must still be active speech,
+  // the stop must not have been requested, and we must be under the restart cap.
+  function _micShouldRestartDictation(){
+    return _micDictationContinuous()
+      && !_speechStopRequested
+      && !!window._micActive
+      && _activeCaptureMode==='speech'
+      && _micRestartCount<_micMaxRestarts;
+  }
+
+  // Screen Wake Lock while dictating. All acquire/release ops are chained onto a
+  // single in-flight promise (_micWakeLockOp) so rapid start/stop/visibility
+  // churn runs strictly in order and can't interleave to leak a lock or null
+  // _micWakeLock mid-request.
+  function _acquireMicWakeLock(){
+    if(!navigator.wakeLock) return Promise.resolve();
+    _micWakeLockOp=Promise.resolve(_micWakeLockOp).then(async()=>{
+      if(_micWakeLock) return;
+      if(!window._micActive||_activeCaptureMode!=='speech') return;
+      try{
+        const lock=await navigator.wakeLock.request('screen');
+        // If the session ended while awaiting, don't hold a stale lock.
+        if(!window._micActive||_activeCaptureMode!=='speech'){
+          try{ await lock.release(); }catch(_){}
+          return;
+        }
+        _micWakeLock=lock;
+        _micWakeLock.addEventListener?.('release',()=>{ _micWakeLock=null; },{once:true});
+      }catch(_){
+        _micWakeLock=null;
+      }
+    });
+    return _micWakeLockOp;
+  }
+
+  function _releaseMicWakeLock(){
+    _micWakeLockOp=Promise.resolve(_micWakeLockOp).then(async()=>{
+      const lock=_micWakeLock;
+      _micWakeLock=null;
+      if(!lock) return;
+      try{ await lock.release(); }catch(_){}
+    });
+    return _micWakeLockOp;
+  }
+
+  // The OS drops a screen wake lock when the tab is hidden; reacquire on return
+  // if we're still dictating (release on hide is a no-op if none is held).
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='hidden'){
+      void _releaseMicWakeLock();
+      return;
+    }
+    if(window._micActive&&_activeCaptureMode==='speech'){
+      void _acquireMicWakeLock();
+    }
+  });
+
   function _stopMic(){
     _micStartSeq+=1;
     _isRecording=false;
@@ -811,6 +894,7 @@ function _micToastKeyForRecognitionError(error){
     // which would otherwise make us stop the wrong backend and orphan the other
     // (#3169 Codex review). _activeCaptureMode is pinned at start.
     if(recognition && _activeCaptureMode==='speech'){
+      _speechStopRequested=true;
       recognition.stop();
       return;
     }
@@ -826,13 +910,22 @@ function _micToastKeyForRecognitionError(error){
   function _ensureSpeechRecognition(){
     if(!SpeechRecognition) return null;
     const sr=recognition||new SpeechRecognition();
-    sr.continuous=false;
+    // Desktop dictation stays one-shot (single utterance); mobile / opt-in
+    // devices run continuous so a natural pause doesn't end the session (#5294).
+    sr.continuous=_micDictationContinuous();
     sr.interimResults=true;
     sr.lang=(typeof _locale!=='undefined'&&_locale._speech)||'en-US';
 
     sr.onstart=()=>{ _finalText=''; };
 
     sr.onresult=(event)=>{
+      // #5294: a real result means the continuity restarts are PRODUCTIVE, not a
+      // stolen-audio-session tight loop — reset the restart budget so a long
+      // dictation with many natural pauses isn't silently capped at
+      // _micMaxRestarts. The cap still guards the failure case: consecutive
+      // restarts that yield no speech (onend without an intervening onresult)
+      // keep incrementing and trip the bound.
+      _micRestartCount=0;
       let interim='';
       let final=_finalText;
       for(let i=event.resultIndex;i<event.results.length;i++){
@@ -850,9 +943,32 @@ function _micToastKeyForRecognitionError(error){
             ? _prefix+' '+_finalText.trimStart()
             : _prefix+_finalText)
         : ta.value;
-      _setRecording(false);
       ta.value=committed;
       autoResize();
+      // Mobile / opt-in continuity: a natural pause ends this recognition run but
+      // the user is still dictating, so restart to keep the session alive. Desktop
+      // (one-shot) and intentional stops (_speechStopRequested) skip this and
+      // finalize. Bounded by _micMaxRestarts so a stolen audio session can't loop.
+      if(_micShouldRestartDictation()){
+        _prefix=committed&&!committed.endsWith(' ')&&!committed.endsWith('\n')
+          ? committed+' '
+          : committed;
+        _finalText='';
+        _micRestartCount++;
+        try{
+          sr.start();
+          return;
+        }catch(err){
+          // Restart failed (e.g. the audio session was taken by another app).
+          // Surface it instead of silently dropping to idle (Greptile P2).
+          showToast(t('mic_error')+String((err&&err.message)||'restart'));
+        }
+      }
+      _speechStopRequested=false;
+      _isRecording=false;
+      _micRestartCount=0;
+      void _releaseMicWakeLock();
+      _setRecording(false);
       if(window._micPendingSend){
         window._micPendingSend=false;
         send();
@@ -861,10 +977,25 @@ function _micToastKeyForRecognitionError(error){
     };
 
     sr.onerror=(event)=>{
+      // While dictating with continuity on, a no-speech/aborted error is a normal
+      // pause or transient audio-session hiccup — swallow it and let onend restart
+      // (bounded by _micMaxRestarts). Desktop one-shot still surfaces the toast.
+      if((event.error==='no-speech'||event.error==='aborted')
+          && _micDictationContinuous()
+          && window._micActive
+          && _activeCaptureMode==='speech'
+          && !_speechStopRequested
+          && _micRestartCount<_micMaxRestarts){
+        return;
+      }
+      _speechStopRequested=false;
       _setRecording(false);
       window._micPendingSend=false;
       _isRecording=false;
-      if(event.error==='network'||event.error==='not-allowed'){
+      _micRestartCount=0;
+      void _releaseMicWakeLock();
+      if(event.error==='network'||event.error==='not-allowed'
+          ||event.error==='service-not-allowed'||event.error==='audio-capture'){
         // Persist SR failure: next reload will skip SpeechRecognition
         localStorage.setItem(_micForceMediaRecorderKey,'1');
         _forceMediaRecorder=true;
@@ -960,8 +1091,14 @@ function _micToastKeyForRecognitionError(error){
     }
     if(recognition && !_forceMediaRecorder && !_rawAudioMode){
       _activeCaptureMode='speech';
+      _speechStopRequested=false;
+      _micRestartCount=0;
+      // Refresh continuity gate at start so a settings/orientation change takes
+      // effect for this session (desktop stays one-shot, mobile stays continuous).
+      recognition.continuous=_micDictationContinuous();
       recognition.lang=(typeof _locale!=='undefined'&&_locale._speech)||'en-US';
       recognition.start();
+      void _acquireMicWakeLock();
       _setRecording(true);
       return;
     }
