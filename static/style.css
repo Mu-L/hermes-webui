@@ -3117,6 +3117,8 @@
     .composer-mobile-config-panel.open{display:flex;}
     .composer-mobile-config-action{box-sizing:border-box;flex:1 1 0;min-height:44px;min-width:0;background:var(--input-bg);border-color:var(--border);}
     .composer-mobile-context-action{flex:1 0 100%;}
+    /* Keep the rich picker in the visual viewport when mobile browser chrome moves. */
+    #composerModelDropdown{position:fixed;bottom:auto;box-sizing:border-box;min-width:0;width:calc(100vw - 16px);max-width:calc(100vw - 16px);z-index:220;}
     /* icon-only composer chips continue below mobile widths */
     .composer-divider{display:none;}
     .composer-status{flex:0 1 auto;min-width:0;max-width:96px;font-size:10px;text-align:right;}
@@ -3205,7 +3207,7 @@
     .send-btn.visible{animation:none;opacity:1;transform:none;}
     /* Approval card */
     .approval-card{padding-left:10px;padding-right:10px;bottom:8px;overflow:visible;}
-    .approval-inner{max-height:min(52vh,360px);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:12px 12px 14px;border-radius:12px;box-shadow:0 -10px 30px rgba(0,0,0,.24);}
+    .approval-inner{max-height:min(52vh,360px);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:12px 12px 14px;border-radius:12px;box-shadow:0 -10px 30px rgba(0,0,0,.24);min-width:min(100%,280px);}
     @supports (height:100dvh){.approval-inner{max-height:min(60dvh,420px);}}
     .approval-header{margin-bottom:8px;}
     .approval-collapse,.approval-dismiss{width:44px;height:44px;line-height:1;overflow:hidden;}
@@ -3215,10 +3217,10 @@
     .approval-btn.yolo{grid-column:1 / -1;}
     .approval-kbd{display:none;}
     /* Clarify card */
-    .clarify-card{padding-left:10px;padding-right:10px;max-height:clamp(180px,min(62vh,calc(100vh - 180px)),360px);}
+    .clarify-card{padding-left:10px;padding-right:10px;overflow:visible;max-height:clamp(180px,min(62vh,calc(100vh - 180px)),360px);}
     .clarify-card .clarify-inner{max-height:clamp(180px,min(62vh,calc(100vh - 180px)),360px);}
     @supports (height:100dvh){.clarify-card,.clarify-card .clarify-inner{max-height:clamp(180px,min(62dvh,calc(100dvh - 180px)),360px);}}
-    .clarify-inner{padding:12px 12px 13px;}
+    .clarify-inner{padding:12px 12px 13px;min-width:min(100%,280px);}
     .clarify-response{flex-direction:column;align-items:stretch;}
     .clarify-input,.clarify-submit{width:100%;min-height:44px;}
     .clarify-choice{min-height:44px;}
@@ -3246,6 +3248,10 @@
 .ws-dropdown.open{display:block;}
 .ws-dropdown-footer{left:0;right:auto;bottom:calc(100% + 4px);min-width:280px;max-width:min(420px,calc(100vw - 32px));}
 .model-dropdown{display:none;position:absolute;bottom:calc(100% + 4px);left:0;min-width:280px;max-width:min(420px,calc(100vw - 32px));background:var(--surface);border:1px solid var(--border2);border-radius:10px;box-shadow:0 -4px 24px rgba(0,0,0,.4);z-index:200;overflow:hidden;max-height:min(70vh,640px);overflow-y:auto;}
+/* Re-assert the mobile picker after the base dropdown rule below the phone media block. */
+@media (max-width:640px){
+  #composerModelDropdown{position:fixed;bottom:auto;box-sizing:border-box;min-width:0;width:calc(100vw - 16px);max-width:calc(100vw - 16px);z-index:220;}
+}
 .model-dropdown.open{display:block;}
 .model-scope-note{position:sticky;top:0;z-index:2;padding:9px 14px;border-bottom:1px solid var(--border);color:var(--text);font-size:11px;font-weight:650;line-height:1.4;background:color-mix(in srgb,var(--surface) 82%,var(--accent-bg));box-shadow:0 1px 0 rgba(0,0,0,.12);}
 .model-group{padding:8px 14px 4px;font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;border-top:1px solid var(--border2);margin-top:2px;}.model-group.collapsible{cursor:pointer;user-select:none}.model-group.collapsible:before{content:'\25b6';display:inline-block;font-size:8px;margin-right:5px;transition:transform .15s ease}.model-group.collapsible.open:before{transform:rotate(90deg)}.model-group-body:empty{display:none}
@@ -4089,6 +4095,7 @@ body.resizing .sidebar{transition:none!important;}
   padding:1px 4px 1px 7px;
   margin-left:0;
   border-radius:0;
+  overflow:hidden;
   color:var(--muted);
   transition:background .18s ease,color .18s ease;
 }
@@ -4146,6 +4153,13 @@ body.resizing .sidebar{transition:none!important;}
    via the title tooltip on wider screens. (#5739 Fable UX fix.) */
 @media (max-width:420px){
   .transparent-event-time{ display:none; }
+}
+/* Very narrow foldables (~280-360px): hide the tool name label so the
+   preview (the most informative part) doesn't get squeezed to zero.
+   The icon + preview + status is enough to identify the event, and
+   the full name is visible on expand/hover. (#6099) */
+@media (max-width:360px){
+  .transparent-event-row .tool-card-name{ display:none; }
 }
 .transparent-event-row .thinking-card-label{
   display:inline;
