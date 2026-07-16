@@ -2482,6 +2482,23 @@ function applyEmptyStateSuggestionPref(){
 }
 
 window.addEventListener('resize',()=>{
+  // #6105/#6080: the floating phone model picker is a <body> child at z-index:200,
+  // the same level as the mobile sidebar drawer and the workspace panel. A direct
+  // landscape/tablet→phone resize can re-reveal an already-open drawer/panel
+  // *underneath* the picker (no click fires, so outside-click-close doesn't run).
+  // Close + restore the picker before we re-sync drawer state, but only when a
+  // phone-width layout will actually surface one of those z-200 siblings — so an
+  // ordinary keyboard/URL-bar reflow doesn't dismiss the picker mid-use.
+  try{
+    if(typeof closeModelDropdown==='function' && !_isDesktopWidth()){
+      const dd=document.getElementById('composerModelDropdown');
+      if(dd&&dd.classList.contains('open')){
+        const drawerOpen=!!document.querySelector('.sidebar.mobile-open');
+        const panelOpen=(typeof _workspacePanelMode!=='undefined'&&_workspacePanelMode&&_workspacePanelMode!=='closed');
+        if(drawerOpen||panelOpen) closeModelDropdown();
+      }
+    }
+  }catch(_){}
   _syncWorkspacePanelInlineWidth();
   syncWorkspacePanelState();
   if(!window.visualViewport) _forceMobileViewportReflow();
