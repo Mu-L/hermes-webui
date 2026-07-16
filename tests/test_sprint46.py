@@ -192,6 +192,77 @@ def test_session_compress_start_stale_runtime_returns_409_before_job_creation(
         assert sid not in routes._MANUAL_COMPRESSION_JOBS
 
 
+def test_session_compress_start_reuses_running_job_when_runtime_is_stale(
+    monkeypatch, cleanup_test_sessions
+):
+    import api.routes as routes
+
+    sid = _make_session()
+    cleanup_test_sessions.append(sid)
+    existing = {
+        "session_id": sid,
+        "focus_topic": "already running",
+        "status": "running",
+        "started_at": time.time(),
+        "updated_at": time.time(),
+    }
+    with routes._MANUAL_COMPRESSION_JOBS_LOCK:
+        routes._MANUAL_COMPRESSION_JOBS[sid] = existing
+    monkeypatch.setattr(
+        routes,
+        "ensure_agent_runtime_current",
+        lambda: (_ for _ in ()).throw(
+            routes.AgentRuntimeChangedError("restart required")
+        ),
+    )
+
+    handler = _FakeHandler()
+    routes._handle_session_compress_start(handler, {"session_id": sid})
+
+    assert handler.status == 200
+    payload = handler.payload()
+    assert payload["status"] == "running"
+    assert payload["session_id"] == sid
+    assert payload["focus_topic"] == "already running"
+    with routes._MANUAL_COMPRESSION_JOBS_LOCK:
+        assert routes._MANUAL_COMPRESSION_JOBS[sid] is existing
+        routes._MANUAL_COMPRESSION_JOBS.pop(sid, None)
+
+
+def test_session_compress_start_rechecks_job_after_runtime_barrier(
+    monkeypatch, cleanup_test_sessions
+):
+    import api.routes as routes
+
+    sid = _make_session()
+    cleanup_test_sessions.append(sid)
+    admitted = {
+        "session_id": sid,
+        "focus_topic": "admitted concurrently",
+        "status": "running",
+        "started_at": time.time(),
+        "updated_at": time.time(),
+    }
+
+    def barrier_then_admit():
+        with routes._MANUAL_COMPRESSION_JOBS_LOCK:
+            routes._MANUAL_COMPRESSION_JOBS[sid] = admitted
+
+    def reject_duplicate_worker(**_kwargs):
+        raise AssertionError("duplicate worker admitted")
+
+    monkeypatch.setattr(routes, "ensure_agent_runtime_current", barrier_then_admit)
+    monkeypatch.setattr(routes.threading, "Thread", reject_duplicate_worker)
+
+    handler = _FakeHandler()
+    routes._handle_session_compress_start(handler, {"session_id": sid})
+
+    assert handler.status == 200
+    assert handler.payload()["status"] == "running"
+    with routes._MANUAL_COMPRESSION_JOBS_LOCK:
+        routes._MANUAL_COMPRESSION_JOBS.pop(sid, None)
+
+
 def test_session_compress_worker_preserves_stale_runtime_taxonomy(monkeypatch):
     import api.routes as routes
 

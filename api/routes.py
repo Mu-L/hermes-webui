@@ -23910,10 +23910,24 @@ def _handle_session_compress_start(handler, body):
     if getattr(s, "active_stream_id", None):
         return bad(handler, "Session is still streaming; wait for the current turn to finish.", 409)
 
+    focus_topic = str(body.get("focus_topic") or body.get("topic") or "").strip()[:500] or None
+    job_body = {"session_id": sid}
+    if focus_topic:
+        job_body["focus_topic"] = focus_topic
+
+    # Repeated start requests observe an existing running job and do not admit
+    # new Agent work, so preserve that idempotent read even if the checkout has
+    # since changed. Do not hold the job lock while running Git subprocesses.
+    now = time.time()
+    with _MANUAL_COMPRESSION_JOBS_LOCK:
+        _manual_compression_cleanup_locked(now)
+        existing = _MANUAL_COMPRESSION_JOBS.get(sid)
+        if existing:
+            existing_payload = _manual_compression_status_payload(existing)
+            if existing_payload.get("status") == "running":
+                return j(handler, existing_payload)
+
     # Reject a stale local Agent runtime before creating the asynchronous job.
-    # The worker has its own guarded synchronous path, but waiting for that
-    # worker would already mutate the job state and would collapse the typed
-    # retryable stale-runtime response into a generic worker error.
     try:
         ensure_agent_runtime_current()
     except AgentRuntimeChangedError as exc:
@@ -23927,11 +23941,8 @@ def _handle_session_compress_start(handler, body):
             status=409,
         )
 
-    focus_topic = str(body.get("focus_topic") or body.get("topic") or "").strip()[:500] or None
-    job_body = {"session_id": sid}
-    if focus_topic:
-        job_body["focus_topic"] = focus_topic
-
+    # Another start request may have admitted a job while the runtime check ran.
+    # Re-check under the lock so only one worker is created.
     now = time.time()
     with _MANUAL_COMPRESSION_JOBS_LOCK:
         _manual_compression_cleanup_locked(now)
