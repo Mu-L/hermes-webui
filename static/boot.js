@@ -436,6 +436,11 @@ function _openMobileSidebarFromGesture(){
   if(_isDesktopWidth())return;
   const sidebar=document.querySelector('.sidebar');
   if(!sidebar)return;
+  // #6105/#6080: the phone model picker is reparented to <body> at z-index:200,
+  // the same level as the sidebar — as a later body child it would paint ON TOP
+  // of the drawer. Close it first (which also restores it into the footer) so a
+  // left-edge swipe reveals the session drawer cleanly, not an orphaned popover.
+  try{if(typeof closeModelDropdown==='function')closeModelDropdown();}catch(_){}
   try{if(typeof _syncMobileSidebarPanelFromMainView==='function')_syncMobileSidebarPanelFromMainView();}catch(_){}
   const layout=document.querySelector('.layout');
   if(layout)layout.classList.remove('sidebar-collapsed');
