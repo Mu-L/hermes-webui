@@ -431,6 +431,73 @@ def test_port_guard_ignores_http_proxy_env(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX daemon guards")
+def test_start_health_probe_ignores_all_proxy_env(tmp_path):
+    """The startup watch must reach its own local health server directly.
+
+    Unlike the preflight ownership guard above, this drives the post-launch
+    health loop: a dead ALL_PROXY must not make ctl wait out its grace period
+    and print the misleading health-timeout note.
+    """
+    port = _free_port()
+    health_server = tmp_path / "health-server"
+    health_server.write_text(
+        textwrap.dedent(
+            """
+            #!/usr/bin/env python3
+            import sys
+            from http.server import BaseHTTPRequestHandler, HTTPServer
+
+            class HealthHandler(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    body = b'{"status": "ok"}'
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
+                def log_message(self, *args):
+                    pass
+
+            HTTPServer(("127.0.0.1", int(sys.argv[-1])), HealthHandler).serve_forever()
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    health_server.chmod(0o755)
+
+    started_pid = None
+    try:
+        result = run_ctl(
+            tmp_path,
+            "start",
+            env=_guard_env(
+                HERMES_WEBUI_PORT=str(port),
+                HERMES_WEBUI_PYTHON=str(health_server),
+                HERMES_WEBUI_CTL_ALLOW_SYSTEMD_CONFLICT="1",
+                # A live local server must still win when both proxy spellings
+                # route clients to a dead endpoint.
+                ALL_PROXY="http://127.0.0.1:1",
+                all_proxy="http://127.0.0.1:1",
+                NO_PROXY="",
+                no_proxy="",
+            ),
+            timeout=15,
+        )
+        combined = result.stdout + result.stderr
+        pid_file = tmp_path / ".hermes" / "webui.pid"
+        if pid_file.exists():
+            started_pid = int(pid_file.read_text().strip())
+        assert result.returncode == 0, combined
+        assert "/health did not respond" not in combined
+    finally:
+        if started_pid:
+            try:
+                os.kill(started_pid, 9)
+            except ProcessLookupError:
+                pass
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX daemon guards")
 def test_ipv6_host_probe_builds_bracketed_url(tmp_path):
     """HERMES_WEBUI_HOST='::1' must probe http://[::1]:port — the unbracketed
     literal is rejected by curl/wget and the running instance is missed."""

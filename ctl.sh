@@ -626,8 +626,7 @@ start_cmd() {
       rm -f "${PID_FILE}" "${STATE_FILE}"
       return 1
     fi
-    if http_proxy='' https_proxy='' HTTP_PROXY='' HTTPS_PROXY='' \
-        hermes_webui_probe_health "${probe_host}" "${CTL_PORT}" "/health" 1 >/dev/null 2>&1; then
+    if hermes_webui_probe_health "${probe_host}" "${CTL_PORT}" "/health" 1 direct >/dev/null 2>&1; then
       healthy=1
       break
     fi
