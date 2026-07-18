@@ -49,7 +49,7 @@ function extractFunc(name){
 """.strip()
 
 
-def _run_hydration(messages: list[dict], *, repeat: bool = False) -> dict:
+def _run_hydration(messages: list[dict], *, repeat: bool = False, throw_helper: bool = False) -> dict:
     assert NODE, "node is required for Anchor hydration behavior tests"
     script = f"""
 const fs = require('fs');
@@ -87,6 +87,13 @@ for(const name of [
   '_hydrateIdLinkedHistoricalToolScenes',
 ]){{
   vm.runInContext(extractFunc(name), sandbox, {{filename:'ui.js:' + name}});
+}}
+
+if({str(throw_helper).lower()}){{
+  vm.runInContext(
+    "_toolArgsSnapshot = function(){{ throw new Error('synthetic event build failure'); }}",
+    sandbox
+  );
 }}
 
 const messages = {json.dumps(messages)};
@@ -289,6 +296,14 @@ def test_id_linked_historical_multi_tool_turn_preserves_declaration_order():
 )
 def test_ambiguous_or_richer_historical_tool_shapes_keep_legacy_ownership(messages):
     data = _run_hydration(messages)
+
+    assert data["first"] == 0
+    assert data["owners"] == []
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for Anchor hydration tests")
+def test_event_building_helper_exceptions_keep_legacy_ownership():
+    data = _run_hydration(_linked_turn(), throw_helper=True)
 
     assert data["first"] == 0
     assert data["owners"] == []

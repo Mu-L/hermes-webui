@@ -14808,7 +14808,9 @@ function _hydrateIdLinkedHistoricalToolScenes(messages, options){
   let hydrated=0;
   const hydrateTurn=(turnEnd)=>{
     if(turnStart<0||turnEnd<=turnStart+1) return;
-    const hydratedTurn=_idLinkedHistoricalTurnScene(list,turnStart,turnEnd,options);
+    let hydratedTurn;
+    try{hydratedTurn=_idLinkedHistoricalTurnScene(list,turnStart,turnEnd,options);}
+    catch(e){return;}
     if(!hydratedTurn) return;
     const owner=list[hydratedTurn.ownerIndex];
     try{owner._anchor_activity_scene=hydratedTurn.scene;}
