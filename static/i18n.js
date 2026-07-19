@@ -17,7 +17,7 @@ const LOCALES = {
     _speech: 'en-US',
     // boot.js
     cancelling: 'Cancelling\u2026',
-    cancel_failed: 'Cancel failed: ',
+    cancel_failed: 'Cancel failed.',
     mic_denied: 'Microphone access denied. Check browser permissions.',
     mic_insecure_origin: 'Voice input needs a secure connection. Open Hermes over HTTPS or from localhost to use the microphone.',
     mic_no_speech: 'No speech detected. Try again.',
@@ -1777,7 +1777,7 @@ const LOCALES = {
     _speech: 'it-IT',
     // boot.js
     cancelling: 'Annullamento\u2026',
-    cancel_failed: 'Annullamento fallito: ',
+    cancel_failed: 'Annullamento fallito.',
     mic_denied: 'Accesso al microfono negato. Controlla i permessi del browser.',
     mic_insecure_origin: 'L\'input vocale richiede una connessione sicura. Apri Hermes tramite HTTPS o da localhost per usare il microfono.',
     mic_no_speech: 'Nessuna voce rilevata. Riprova.',
@@ -3519,7 +3519,7 @@ const LOCALES = {
     _speech: 'ja-JP',
     // boot.js
     cancelling: 'キャンセル中…',
-    cancel_failed: 'キャンセル失敗: ',
+    cancel_failed: 'キャンセルに失敗しました。',
     mic_denied: 'マイクへのアクセスが拒否されました。ブラウザの権限を確認してください。',
     mic_insecure_origin: '音声入力にはセキュアな接続が必要です。マイクを使うには HTTPS または localhost 経由で Hermes を開いてください。',
     mic_no_speech: '音声が検出されませんでした。もう一度お試しください。',
@@ -5265,7 +5265,7 @@ const LOCALES = {
     _label: 'Русский',
     _speech: 'ru-RU',
     cancelling: 'Отменяю…',
-    cancel_failed: 'Не удалось отменить: ',
+    cancel_failed: 'Не удалось отменить.',
     mic_denied: 'Доступ к микрофону запрещён. Проверьте разрешения браузера.',
     mic_insecure_origin: 'Для голосового ввода нужно защищённое соединение. Откройте Hermes по HTTPS или с localhost, чтобы использовать микрофон.',
     mic_no_speech: 'Речь не распознана. Попробуйте ещё раз.',
@@ -6987,7 +6987,7 @@ const LOCALES = {
     _speech: 'es-ES',
     // boot.js
     cancelling: 'Cancelando…',
-    cancel_failed: 'Error al cancelar: ',
+    cancel_failed: 'Error al cancelar.',
     mic_denied: 'Acceso al micrófono denegado. Revisa los permisos del navegador.',
     mic_insecure_origin: 'La entrada de voz necesita una conexión segura. Abre Hermes con HTTPS o desde localhost para usar el micrófono.',
     mic_no_speech: 'No se detectó voz. Inténtalo de nuevo.',
@@ -8675,7 +8675,7 @@ const LOCALES = {
     _speech: 'de-DE',
     // boot.js
     cancelling: 'Wird abgebrochen\u2026',
-    cancel_failed: 'Abbrechen fehlgeschlagen: ',
+    cancel_failed: 'Abbrechen fehlgeschlagen.',
     mic_denied: 'Mikrofonzugriff verweigert. Überprüfen Sie die Browserberechtigungen.',
     mic_insecure_origin: 'Für die Spracheingabe ist eine sichere Verbindung erforderlich. Öffne Hermes über HTTPS oder von localhost, um das Mikrofon zu verwenden.',
     mic_no_speech: 'Keine Sprache erkannt. Versuchen Sie es erneut.',
@@ -10357,7 +10357,7 @@ const LOCALES = {
     _speech: 'zh-CN',
     // boot.js
     cancelling: '正在取消...',
-    cancel_failed: '取消失败：',
+    cancel_failed: '取消失败。',
     mic_denied: '麦克风访问被拒绝，请检查浏览器权限。',
     mic_insecure_origin: '语音输入需要安全连接。请通过 HTTPS 协议或从本地主机打开Hermes，以便使用麦克风。', 
     mic_no_speech: '没有检测到语音，请再试一次。',
@@ -12034,7 +12034,7 @@ const LOCALES = {
     _speech: 'zh-TW',
     // boot.js
     cancelling: '正在取消……',
-    cancel_failed: '取消失敗：',
+    cancel_failed: '取消失敗。',
     mic_denied: '麥克風存取遭拒。請檢查瀏覽器權限。',
     mic_insecure_origin: '語音輸入需要安全連線。請透過 HTTPS 或 localhost 開啟 Hermes 才能使用麥克風。',
     mic_no_speech: '未偵測到語音。請再試一次。',
@@ -13778,7 +13778,7 @@ const LOCALES = {
     _speech: 'pt-BR',
     // boot.js
     cancelling: 'Cancelando…',
-    cancel_failed: 'Falha ao cancelar: ',
+    cancel_failed: 'Falha ao cancelar.',
     mic_denied: 'Acesso ao microfone negado. Verifique as permissões do navegador.',
     mic_insecure_origin: 'A entrada de voz precisa de uma conexão segura. Abra o Hermes por HTTPS ou a partir do localhost para usar o microfone.',
     mic_no_speech: 'Nenhuma fala detectada. Tente novamente.',
@@ -15340,7 +15340,7 @@ const LOCALES = {
     _speech: 'ko-KR',
     // boot.js
     cancelling: '취소 중\u2026',
-    cancel_failed: '취소 실패: ',
+    cancel_failed: '취소에 실패했습니다.',
     mic_denied: '마이크 접근이 거부되었습니다. 브라우저 권한을 확인하세요.',
     mic_insecure_origin: '음성 입력에는 보안 연결이 필요합니다. 마이크를 사용하려면 HTTPS 또는 localhost를 통해 Hermes를 여세요.',
     mic_no_speech: '음성이 감지되지 않았습니다. 다시 시도하세요.',
@@ -17071,7 +17071,7 @@ const LOCALES = {
     _label: 'Français',
     _speech: 'fr-FR',
     cancelling: 'Annulation\u2026',
-    cancel_failed: 'Échec de l\'annulation : ',
+    cancel_failed: 'Échec de l\'annulation.',
     mic_denied: 'Accès au microphone refusé. Vérifiez les autorisations du navigateur.',
     mic_insecure_origin: 'La saisie vocale nécessite une connexion sécurisée. Ouvrez Hermes en HTTPS ou depuis localhost pour utiliser le microphone.',
     mic_no_speech: 'Aucune parole détectée. Réessayez.',
@@ -20000,7 +20000,7 @@ const LOCALES = {
     btw_no_answer: 'Nebyla přijata žádná odpověď.',
     busy_interrupt_confirm: 'Přerušeno — odeslání nové zprávy',
     busy_steer_fallback: 'Řízení není k dispozici — návrh byl obnoven',
-    cancel_failed: 'Zrušení selhalo: ',
+    cancel_failed: 'Zrušení selhalo.',
     cancel_unavailable: 'Zrušení není k dispozici.',
     cancelling: 'Rušení\u2026',
     clarify_heading: 'Zde je zapotřebí vyjasnění.',
@@ -20492,7 +20492,7 @@ const LOCALES = {
     _speech: 'tr-TR',
     // boot.js
     cancelling: 'İptal ediliyor\u2026',
-    cancel_failed: 'İptal başarısız oldu:',
+    cancel_failed: 'İptal başarısız oldu.',
     mic_denied: 'Mikrofon erişimi reddedildi. Tarayıcı izinlerini kontrol edin.',
     mic_insecure_origin: 'Sesli giriş güvenli bir bağlantı gerektirir. Mikrofonu kullanmak için Hermes\'i HTTPS üzerinden veya localhost\'tan açın.',
     mic_no_speech: 'Konuşma algılanmadı. Tekrar deneyin.',
@@ -22225,7 +22225,7 @@ const LOCALES = {
     _speech: 'pl-PL',
     // boot.js
     cancelling: 'Anulowanie…',
-    cancel_failed: 'Anulowanie nie powiodło się: ',
+    cancel_failed: 'Anulowanie nie powiodło się.',
     mic_denied: 'Odmowa dostępu do mikrofonu. Sprawdź uprawnienia przeglądarki.',
     mic_insecure_origin: 'Wprowadzanie głosowe wymaga bezpiecznego połączenia. Otwórz Hermes przez HTTPS lub z localhost, aby użyć mikrofonu.',
     mic_no_speech: 'Nie wykryto mowy. Spróbuj ponownie.',
@@ -23962,7 +23962,7 @@ const LOCALES = {
     _speech: 'vi-VN',
     // boot.js
     cancelling: 'Đang hủy…',
-    cancel_failed: 'Hủy thất bại: ',
+    cancel_failed: 'Hủy thất bại.',
     mic_denied: 'Quyền truy cập microphone bị từ chối. Kiểm tra quyền trình duyệt.',
     mic_no_speech: 'Không phát hiện giọng nói. Hãy thử lại.',
     mic_network: 'Nhận diện giọng nói không khả dụng.',

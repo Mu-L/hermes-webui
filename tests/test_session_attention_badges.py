@@ -148,7 +148,7 @@ def test_attention_summary_keeps_direct_runs_mirror_after_stream_pointer_clears(
             })
 
         handler.send_response.assert_called_with(200)
-        respond_approval.assert_called_once_with("run-retained", "approval-retained", "deny")
+        respond_approval.assert_called_once_with("run-retained", "", "deny")
         assert json.loads(handler.wfile.getvalue().decode("utf-8"))["ok"] is True
     finally:
         approvals._pending.pop(sid, None)

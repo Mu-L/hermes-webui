@@ -470,7 +470,8 @@ def _run_gateway_runs_api_streaming(
         if stop_confirmed:
             put_gateway_event("cancel", {"message": "Cancelled by user"})
             return None, usage
-        cancel_event.clear()
+        put_gateway_event("apperror", {"message": "Gateway stop failed"})
+        return None, usage
 
     url_events = f"{base_url.rstrip('/')}/v1/runs/{run_id}/events"
     headers_sse = dict(headers)
@@ -504,8 +505,6 @@ def _run_gateway_runs_api_streaming(
                 approval_data = _gateway_runs_approval_event(payload)
                 if approval_data:
                     approval_data["run_id"] = run_id
-                    if not approval_data.get("approval_id"):
-                        approval_data["approval_id"] = f"gwrun:{run_id}:{uuid.uuid4().hex}"
                     from api.route_approvals import submit_gateway_pending_mirror
                     head, total = submit_gateway_pending_mirror(session_id, approval_data)
                     put_gateway_event("approval", {**(head or approval_data), "pending_count": total})

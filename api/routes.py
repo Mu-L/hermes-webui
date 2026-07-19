@@ -13378,15 +13378,13 @@ def handle_get(handler, parsed) -> bool:
             run_id = _STREAM_RUN_IDS.get(stream_id)
             pending_run_id = False
             if not run_id:
-                import time as _time
-
                 pending_run_id = gateway_run_id_pending(stream_id)
-                attempts_remaining = 10
-                while not run_id and pending_run_id and attempts_remaining > 0:
-                    _time.sleep(0.05)
-                    run_id = _STREAM_RUN_IDS.get(stream_id)
-                    pending_run_id = gateway_run_id_pending(stream_id)
-                    attempts_remaining -= 1
+                if pending_run_id:
+                    cancel_flag = CANCEL_FLAGS.get(stream_id)
+                    if cancel_flag:
+                        cancel_flag.set()
+                    cancelled = cancel_stream(stream_id)
+                    return j(handler, {"ok": True, "cancelled": cancelled, "deferred": True, "stream_id": stream_id})
             if run_id:
                 if stop_gateway_run(stream_id):
                     owner_sid = stream_owner_session_id(stream_id)
@@ -13394,8 +13392,6 @@ def handle_get(handler, parsed) -> bool:
                         retire_gateway_pending_mirror(owner_sid, run_id=run_id)
                 else:
                     gateway_stop_blocked = True
-            elif pending_run_id:
-                gateway_stop_blocked = True
         except Exception:
             logger.debug("Failed to stop gateway run during chat cancellation", exc_info=True)
             gateway_stop_blocked = True
@@ -23955,11 +23951,11 @@ def _gateway_pending_approval_without_run_id(sid: str, approval_id: str) -> bool
         if approval_id:
             for entry in entries:
                 if isinstance(entry, dict) and entry.get("approval_id") == approval_id:
-                    return bool(entry.get(_GATEWAY_MIRROR_FLAG))
+                    return bool(entry.get(_GATEWAY_MIRROR_FLAG)) and not str(entry.get("run_id") or "").strip()
             return False
         if not entries or not isinstance(entries[0], dict):
             return False
-        return bool(entries[0].get(_GATEWAY_MIRROR_FLAG))
+        return bool(entries[0].get(_GATEWAY_MIRROR_FLAG)) and not str(entries[0].get("run_id") or "").strip()
 
 
 def _session_has_pending_approval(sid: str) -> bool:
@@ -24002,7 +23998,7 @@ def _handle_approval_respond(handler, body):
             _gateway_api_key,
             webui_gateway_chat_enabled,
         )
-        from api.config import get_config as _get_config
+        from api.config import get_config as _get_config, gateway_supports_approval_identity_v1
         s = get_session(sid)
         _candidate_run_id = None
         if s is not None:
@@ -24109,8 +24105,9 @@ def _handle_approval_respond(handler, body):
             _base = _gateway_base_url(_cfg)
             _key = _gateway_api_key()
             try:
+                identity_v1 = gateway_supports_approval_identity_v1(_base, _key)
                 HttpRunnerClient(base_url=_base, api_key=_key).respond_approval(
-                    _run_id, matched_mirror["approval_id"], choice
+                    _run_id, matched_mirror["approval_id"] if identity_v1 else "", choice
                 )
             except (RunnerClientError, ValueError) as exc:
                 return j(handler, {"ok": False, "choice": choice, "relayed": True, "error": str(exc)}, status=502)
@@ -24125,22 +24122,13 @@ def _handle_approval_respond(handler, body):
             return j(handler, {"ok": False, "choice": choice, "relayed": False,
                                "code": "gateway_run_unavailable",
                                "error": _GATEWAY_APPROVAL_RELAY_UNAVAILABLE}, status=409)
-        # Only a still-mirrored gateway approval with a missing run should 409;
-        # stale or empty gateway clicks fall through to local resolution.
+        # A no-run mirror is local visibility state only. Retire it instead of
+        # claiming that a remote approval can still be resolved.
         if webui_gateway_chat_enabled(_get_config()) and _gateway_pending_approval_without_run_id(
             sid, approval_id
         ):
-            return j(
-                handler,
-                {
-                    "ok": False,
-                    "choice": choice,
-                    "relayed": False,
-                    "code": "gateway_run_unavailable",
-                    "error": _GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
-                },
-                status=409,
-            )
+            retire_gateway_pending_mirror(sid, approval_id=approval_id)
+            return j(handler, {"ok": True, "choice": choice, "local_retired": True})
     except Exception:
         pass  # fall through to local approval path
 

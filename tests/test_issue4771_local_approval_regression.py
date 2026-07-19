@@ -381,10 +381,8 @@ def test_local_plain_pending_without_id_beats_active_remote_candidate_run():
         _cleanup(sid)
 
 
-def test_gateway_mirrored_approval_without_run_still_409s():
-    """#4771 behaviour preserved: on the gateway backend, a mirrored approval
-    whose run is gone must still surface the actionable 409 so the card stays
-    visible instead of silently failing."""
+def test_gateway_mirrored_approval_without_run_retires_locally():
+    """A gateway mirror without a run retires instead of leaving a ghost card."""
     sid = f"gw-approval-{uuid.uuid4().hex[:8]}"
     _register_session(sid)  # no active_stream_id -> no _STREAM_RUN_IDS mapping
     try:
@@ -396,10 +394,8 @@ def test_gateway_mirrored_approval_without_run_still_409s():
                 {"session_id": sid, "choice": "once", "approval_id": approval_id},
             )
         resp = handler.json()
-        assert handler.status == 409, f"expected 409, got {handler.status}: {resp}"
-        assert resp.get("ok") is False
-        assert resp.get("relayed") is False
-        assert resp.get("code") == "gateway_run_unavailable"
+        assert handler.status == 200, f"expected 200, got {handler.status}: {resp}"
+        assert resp == {"ok": True, "choice": "once", "local_retired": True}
     finally:
         _cleanup(sid)
 
