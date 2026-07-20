@@ -345,7 +345,8 @@ def _gateway_runs_approval_event(payload: dict) -> dict | None:
     pattern_key = str(payload.get("pattern_key") or "").strip()
     args = payload.get("args") if isinstance(payload.get("args"), (list, dict)) else []
     run_id = str(payload.get("run_id") or "").strip()
-    approval_id = str(payload.get("approval_id") or payload.get("id") or "").strip()
+    raw_approval_id = str(payload.get("approval_id") or payload.get("id") or "").strip()
+    approval_id = raw_approval_id
     risk = str(payload.get("risk_level") or "high").strip()
     choices = payload.get("choices") if isinstance(payload.get("choices"), list) else []
     allow_permanent = payload.get("allow_permanent")
@@ -363,6 +364,7 @@ def _gateway_runs_approval_event(payload: dict) -> dict | None:
         "risk_level": risk,
         "run_id": run_id,
         "approval_id": approval_id,
+        "_gateway_raw_approval_id_present": bool(raw_approval_id),
         "choices": choices,
         "allow_permanent": bool(allow_permanent),
     }
@@ -505,7 +507,7 @@ def _run_gateway_runs_api_streaming(
                 if approval_data:
                     approval_data["run_id"] = run_id
                     from api.config import gateway_supports_approval_identity_v1
-                    approval_data["_gateway_agent_identity_v1"] = bool(approval_data.get("approval_id")) and gateway_supports_approval_identity_v1(base_url, api_key)
+                    approval_data["_gateway_agent_identity_v1"] = bool(approval_data.get("_gateway_raw_approval_id_present")) and gateway_supports_approval_identity_v1(base_url, api_key)
                     from api.route_approvals import submit_gateway_pending_mirror
                     head, total = submit_gateway_pending_mirror(session_id, approval_data)
                     put_gateway_event("approval", {**(head or approval_data), "pending_count": total})

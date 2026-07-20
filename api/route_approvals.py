@@ -518,6 +518,55 @@ def resolve_gateway_pending_local(
     return 1, head, total
 
 
+def resolve_gateway_pending_local_no_run_mirror(
+    session_key: str, approval_id: str, choice: str, reason: str | None = None
+) -> tuple[bool, int, dict | None, int]:
+    """Resolve an exact no-run mirror only while its parked producer still exists."""
+    target = None
+    with _lock:
+        approval_id = str(approval_id or "").strip()
+        queue = _pending.get(session_key)
+        entries = queue if isinstance(queue, list) else [queue] if queue else []
+        matched_mirror = next(
+            (
+                entry for entry in entries
+                if _is_gateway_mirror_entry(entry)
+                and not str(entry.get("run_id") or "").strip()
+                and str(entry.get("approval_id") or "").strip() == approval_id
+            ),
+            None,
+        )
+        if matched_mirror is None:
+            return False, 0, entries[0] if entries else None, len(entries)
+
+        gateway_queue = _gateway_queues.get(session_key) or []
+        for index, entry in enumerate(gateway_queue):
+            data = getattr(entry, "data", None) or {}
+            if str(data.get("approval_id") or "").strip() == approval_id:
+                target = gateway_queue.pop(index)
+                break
+        if target is None:
+            return True, 0, entries[0] if entries else None, len(entries)
+
+        if gateway_queue:
+            _gateway_queues[session_key] = gateway_queue
+        else:
+            _gateway_queues.pop(session_key, None)
+        entries.remove(matched_mirror)
+        if entries:
+            _pending[session_key] = entries
+        else:
+            _pending.pop(session_key, None)
+        head, total, _changed = reconcile_gateway_pending_mirror_locked(session_key)
+        _approval_sse_notify_locked(session_key, head, total)
+    target.result = choice
+    if reason:
+        target.reason = reason
+    target.event.set()
+    publish_session_list_changed("attention_resolved")
+    return True, 1, head, total
+
+
 def submit_pending(session_key: str, approval: dict) -> None:
     """Append a pending approval to the per-session queue.
 

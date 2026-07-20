@@ -9,6 +9,7 @@ import subprocess
 
 REPO = pathlib.Path(__file__).parent.parent
 BOOT_JS = (REPO / "static" / "boot.js").read_text(encoding="utf-8")
+UI_JS = (REPO / "static" / "ui.js").read_text(encoding="utf-8")
 COMMANDS_JS = (REPO / "static" / "commands.js").read_text(encoding="utf-8")
 MESSAGES_JS = (REPO / "static" / "messages.js").read_text(encoding="utf-8")
 SESSIONS_JS = (REPO / "static" / "sessions.js").read_text(encoding="utf-8")
@@ -31,6 +32,7 @@ def _extract_function(src: str, name: str) -> str:
 
 
 CANCEL_SESSION_STREAM_SRC = _extract_function(BOOT_JS, "cancelSessionStream")
+COMPOSER_PRIMARY_ACTION_SRC = _extract_function(UI_JS, "handleComposerPrimaryAction")
 
 
 def test_source_gates_sidebar_settle_on_http_success():
@@ -142,3 +144,35 @@ def test_failed_sidebar_stop_keeps_local_state():
     assert result["approvalHides"] == 0
     assert result["clarifyStops"] == 0
     assert result["clarifyHides"] == 0
+
+
+def test_primary_composer_stop_surfaces_cancel_failure_and_preserves_success():
+    script = r'''
+const M = { toasts: [], sends: 0, results: [] };
+globalThis.window = {};
+globalThis.S = {};
+globalThis.getComposerPrimaryAction = () => 'stop';
+globalThis.showToast = (...args) => M.toasts.push(args);
+globalThis.t = (key) => key;
+globalThis.send = () => { M.sends += 1; };
+globalThis.cancelStream = async () => M.cancelResult;
+__COMPOSER_PRIMARY_ACTION_SRC__
+for (const result of [false, true]) {
+  M.cancelResult = result;
+  await handleComposerPrimaryAction();
+  M.results.push({ result, toasts: M.toasts.slice(), sends: M.sends });
+}
+console.log(JSON.stringify(M));
+'''.replace("__COMPOSER_PRIMARY_ACTION_SRC__", COMPOSER_PRIMARY_ACTION_SRC)
+    completed = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=str(REPO), text=True, capture_output=True, timeout=30,
+    )
+    assert completed.returncode == 0, (
+        f"node subprocess failed:\n--- stdout ---\n{completed.stdout}\n--- stderr ---\n{completed.stderr}"
+    )
+    result = json.loads(completed.stdout.splitlines()[-1])
+    assert result["results"] == [
+        {"result": False, "toasts": [["cancel_failed"]], "sends": 0},
+        {"result": True, "toasts": [["cancel_failed"]], "sends": 0},
+    ]

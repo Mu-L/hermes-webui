@@ -9721,6 +9721,7 @@ from api.route_approvals import (  # noqa: F401 — re-exports for backward comp
     retire_gateway_pending_mirror,
     reconcile_gateway_pending_mirror_locked,
     resolve_gateway_pending_local,
+    resolve_gateway_pending_local_no_run_mirror,
     submit_gateway_pending_mirror,
     submit_pending,
 )
@@ -24123,14 +24124,19 @@ def _handle_approval_respond(handler, body):
             return j(handler, {"ok": False, "choice": choice, "relayed": False,
                                "code": "gateway_run_unavailable",
                                "error": _GATEWAY_APPROVAL_RELAY_UNAVAILABLE}, status=409)
-        # A no-run mirror is local visibility state only. Retire it instead of
-        # claiming that a remote approval can still be resolved.
-        if webui_gateway_chat_enabled(_get_config()) and _gateway_pending_approval_without_run_id(
-            sid, approval_id
-        ):
-            resolve_gateway_pending_local(sid, approval_id, choice)
-            retire_gateway_pending_mirror(sid, approval_id=approval_id)
-            return j(handler, {"ok": True, "choice": choice, "local_retired": True})
+        # A no-run mirror is local visibility state only. Resolve it only while
+        # the exact parked producer still exists; otherwise keep the card live
+        # and fail closed instead of claiming success.
+        if webui_gateway_chat_enabled(_get_config()):
+            handled_no_run_mirror, resolved_count, _, _ = resolve_gateway_pending_local_no_run_mirror(
+                sid, approval_id, choice
+            )
+            if handled_no_run_mirror and resolved_count == 1:
+                return j(handler, {"ok": True, "choice": choice, "local_retired": True})
+            if handled_no_run_mirror:
+                return j(handler, {"ok": False, "choice": choice, "relayed": False,
+                                   "code": "gateway_run_unavailable",
+                                   "error": _GATEWAY_APPROVAL_RELAY_UNAVAILABLE}, status=409)
     except Exception:
         pass  # fall through to local approval path
 

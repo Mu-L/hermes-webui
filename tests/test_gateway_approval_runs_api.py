@@ -429,6 +429,172 @@ def test_gateway_runs_api_streaming_parses_real_run_events():
     assert approvals.gateway_pending_mirror("sess1", run_id="run-abc") is None
 
 
+def test_live_empty_ingress_id_stays_fifo_under_capability_v1():
+    """A normalized fallback browser ID must not become authoritative Agent identity."""
+    from api.config import STREAM_PARTIAL_TEXT, STREAM_REASONING_TEXT
+    from api.gateway_chat import _STREAM_RUN_IDS, _run_gateway_runs_api_streaming
+    from api import routes
+    import api.route_approvals as approvals
+
+    sid = "sid-live-empty-ingress"
+    stream_id = "stream-live-empty-ingress"
+    events = []
+    STREAM_PARTIAL_TEXT[stream_id] = ""
+    STREAM_REASONING_TEXT[stream_id] = ""
+
+    class _JsonResponse:
+        def read(self, _limit=None):
+            return b'{"run_id":"run-empty-ingress"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+    class _SseResponse:
+        def __iter__(self):
+            return iter([
+                b'data: {"event":"approval.request","command":"rm -rf /tmp/x","description":"Dangerous","run_id":"run-empty-ingress","approval_id":"","id":""}\n',
+                b'\n',
+                b'data: [DONE]\n',
+                b'\n',
+            ])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+    def fake_urlopen(req, *, timeout=None):
+        if req.full_url.endswith("/v1/runs"):
+            return _JsonResponse()
+        return _SseResponse()
+
+    def fake_mapped_approval(payload):
+        assert payload["approval_id"] == ""
+        assert payload["id"] == ""
+        return {
+            "command": "rm -rf /tmp/x",
+            "description": "Dangerous",
+            "run_id": "run-empty-ingress",
+            "approval_id": "gwrun:normalized-fallback",
+            "_gateway_raw_approval_id_present": False,
+        }
+
+    handler = MagicMock()
+    handler.wfile = io.BytesIO()
+    try:
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen), \
+             patch("api.gateway_chat._gateway_runs_approval_event", side_effect=fake_mapped_approval), \
+             patch("api.config.gateway_supports_approval_identity_v1", return_value=True):
+            _run_gateway_runs_api_streaming(
+                session_id=sid, msg_text="hi", model="test-model", workspace="/tmp",
+                stream_id=stream_id, base_url="http://gw:8642", api_key="secret",
+                prefill_messages=[], body_extras={}, put_gateway_event=lambda event, data: events.append((event, data)),
+                cancel_event=threading.Event(),
+            )
+            mirror = approvals.gateway_pending_mirror(sid, run_id="run-empty-ingress")
+            with patch("api.routes.get_session", return_value=SimpleNamespace(active_stream_id=stream_id)), \
+                 patch("api.config.gateway_supports_approval_identity_v1", return_value=True), \
+                 patch("api.runner_client.HttpRunnerClient.respond_approval") as respond:
+                routes._handle_approval_respond(handler, {
+                    "session_id": sid, "choice": "once", "approval_id": "gwrun:normalized-fallback",
+                })
+                respond.assert_called_once_with("run-empty-ingress", "", "once")
+    finally:
+        STREAM_PARTIAL_TEXT.pop(stream_id, None)
+        STREAM_REASONING_TEXT.pop(stream_id, None)
+        _STREAM_RUN_IDS.pop(stream_id, None)
+
+    assert events[0][0] == "approval"
+    assert events[0][1]["approval_id"] == "gwrun:normalized-fallback"
+    assert events[0][1]["_gateway_agent_identity_v1"] is False
+    assert mirror["approval_id"] == "gwrun:normalized-fallback"
+    assert mirror["_gateway_agent_identity_v1"] is False
+    approvals._pending.pop(sid, None)
+    approvals._gateway_queues.pop(sid, None)
+
+
+def test_live_authoritative_ingress_id_relays_exactly_under_capability_v1():
+    """A raw Agent-issued approval ID becomes authoritative only through live ingress."""
+    from api.config import STREAM_PARTIAL_TEXT, STREAM_REASONING_TEXT
+    from api.gateway_chat import _STREAM_RUN_IDS, _run_gateway_runs_api_streaming
+    from api import routes
+    import api.route_approvals as approvals
+
+    sid = "sid-live-authoritative-ingress"
+    stream_id = "stream-live-authoritative-ingress"
+    events = []
+    STREAM_PARTIAL_TEXT[stream_id] = ""
+    STREAM_REASONING_TEXT[stream_id] = ""
+
+    class _JsonResponse:
+        def read(self, _limit=None):
+            return b'{"run_id":"run-authoritative-ingress"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+    class _SseResponse:
+        def __iter__(self):
+            return iter([
+                b'data: {"event":"approval.request","command":"echo hi","description":"Safe","run_id":"run-authoritative-ingress","approval_id":"agent-approval-1","id":"agent-approval-legacy"}\n',
+                b'\n',
+                b'data: [DONE]\n',
+                b'\n',
+            ])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+    def fake_urlopen(req, *, timeout=None):
+        if req.full_url.endswith("/v1/runs"):
+            return _JsonResponse()
+        return _SseResponse()
+
+    handler = MagicMock()
+    handler.wfile = io.BytesIO()
+    try:
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen), \
+             patch("api.config.gateway_supports_approval_identity_v1", return_value=True):
+            _run_gateway_runs_api_streaming(
+                session_id=sid, msg_text="hi", model="test-model", workspace="/tmp",
+                stream_id=stream_id, base_url="http://gw:8642", api_key="secret",
+                prefill_messages=[], body_extras={}, put_gateway_event=lambda event, data: events.append((event, data)),
+                cancel_event=threading.Event(),
+            )
+            mirror = approvals.gateway_pending_mirror(
+                sid, approval_id="agent-approval-1", run_id="run-authoritative-ingress"
+            )
+            with patch("api.routes.get_session", return_value=SimpleNamespace(active_stream_id=stream_id)), \
+                 patch("api.config.gateway_supports_approval_identity_v1", return_value=True), \
+                 patch("api.runner_client.HttpRunnerClient.respond_approval") as respond:
+                routes._handle_approval_respond(handler, {
+                    "session_id": sid, "choice": "once", "approval_id": "agent-approval-1",
+                })
+                respond.assert_called_once_with("run-authoritative-ingress", "agent-approval-1", "once")
+    finally:
+        STREAM_PARTIAL_TEXT.pop(stream_id, None)
+        STREAM_REASONING_TEXT.pop(stream_id, None)
+        _STREAM_RUN_IDS.pop(stream_id, None)
+
+    assert events[0][0] == "approval"
+    assert events[0][1]["approval_id"] == "agent-approval-1"
+    assert events[0][1]["_gateway_agent_identity_v1"] is True
+    assert mirror["approval_id"] == "agent-approval-1"
+    assert mirror["_gateway_agent_identity_v1"] is True
+    approvals._pending.pop(sid, None)
+    approvals._gateway_queues.pop(sid, None)
+
+
 def test_gateway_runs_api_streaming_same_run_fifo_emits_head_and_promotes_successor():
     """Runs API approval events publish the reconciled FIFO head and count."""
     from api.config import STREAM_PARTIAL_TEXT, STREAM_REASONING_TEXT

@@ -527,8 +527,8 @@ class TestApprovalHTTPEndpoints:
                 r._gateway_queues.pop(sid, None)
                 pass  # no external token state to clean
 
-    def test_gateway_mirror_without_run_id_returns_explicit_conflict(self, monkeypatch):
-        """Gateway-mirrored approvals without relayable run state must stay actionable."""
+    def test_gateway_mirror_without_run_id_and_no_producer_returns_explicit_conflict(self, monkeypatch):
+        """A no-run mirror stays actionable when no local producer is parked."""
         from api import routes as r
         from api import route_approvals as ra
         from api.gateway_chat import _STREAM_RUN_IDS
@@ -561,7 +561,6 @@ class TestApprovalHTTPEndpoints:
             r._pending.pop(sid, None)
             r._gateway_queues.pop(sid, None)
             _STREAM_RUN_IDS.pop(stream_id, None)
-            r._gateway_queues[sid] = [_ApprovalEntry(approval)]
         try:
             ra.submit_gateway_pending_mirror(sid, approval)
             with _lock:
@@ -585,8 +584,107 @@ class TestApprovalHTTPEndpoints:
                 assert isinstance(pending_queue, list)
                 assert len(pending_queue) == 1
                 assert pending_queue[0]["approval_id"] == approval_id
-                assert sid in r._gateway_queues
-                assert not r._gateway_queues[sid][0].event.is_set()
+                assert sid not in r._gateway_queues
+        finally:
+            with _lock:
+                r._pending.pop(sid, None)
+                r._gateway_queues.pop(sid, None)
+                _STREAM_RUN_IDS.pop(stream_id, None)
+
+    def test_gateway_mirror_without_run_id_with_one_producer_resolves_exactly(self, monkeypatch):
+        """A no-run mirror retires only after its exact local producer resolves."""
+        from api import routes as r
+        from api import route_approvals as ra
+        from api.gateway_chat import _STREAM_RUN_IDS
+
+        sid = f"http-gateway-local-{uuid.uuid4().hex[:8]}"
+        stream_id = f"stream-local-{uuid.uuid4().hex[:8]}"
+        approval = {"command": "rm -rf /tmp/local", "description": "local"}
+        sibling = {"command": "rm -rf /tmp/sibling", "description": "sibling"}
+        captured = {}
+
+        def fake_j(handler, data, status=200, extra_headers=None):
+            captured["payload"] = data
+            captured["status"] = status
+            return data
+
+        monkeypatch.setattr(r, "j", fake_j)
+        monkeypatch.setattr(r, "get_session", lambda _sid: SimpleNamespace(active_stream_id=stream_id))
+        monkeypatch.setenv("HERMES_WEBUI_CHAT_BACKEND", "gateway")
+        entry = _ApprovalEntry(approval)
+        sibling_entry = _ApprovalEntry(sibling)
+        with _lock:
+            r._pending.pop(sid, None)
+            r._gateway_queues[sid] = [entry, sibling_entry]
+        try:
+            ra.submit_gateway_pending_mirror(sid, approval)
+            with _lock:
+                approval_id = r._pending[sid][0]["approval_id"]
+
+            r._handle_approval_respond(
+                object(), {"session_id": sid, "choice": "once", "approval_id": approval_id}
+            )
+
+            assert captured["status"] == 200
+            assert captured["payload"] == {"ok": True, "choice": "once", "local_retired": True}
+            assert entry.event.is_set()
+            assert entry.result == "once"
+            assert not sibling_entry.event.is_set()
+            with _lock:
+                assert r._pending[sid][0]["command"] == sibling["command"]
+        finally:
+            with _lock:
+                r._pending.pop(sid, None)
+                r._gateway_queues.pop(sid, None)
+                _STREAM_RUN_IDS.pop(stream_id, None)
+
+    def test_gateway_no_run_mirror_stays_visible_when_exact_local_producer_is_gone(self, monkeypatch):
+        """A tokenized no-run mirror stays live when its parked producer already vanished."""
+        from api import routes as r
+        from api import route_approvals as ra
+        from api.gateway_chat import _STREAM_RUN_IDS
+
+        sid = f"http-gateway-race-{uuid.uuid4().hex[:8]}"
+        stream_id = f"stream-race-{uuid.uuid4().hex[:8]}"
+        approval = {"command": "rm -rf /tmp/race", "description": "race"}
+        captured = {}
+
+        def fake_j(handler, data, status=200, extra_headers=None):
+            captured["payload"] = data
+            captured["status"] = status
+            return data
+
+        monkeypatch.setattr(r, "j", fake_j)
+        monkeypatch.setattr(r, "get_session", lambda _sid: SimpleNamespace(active_stream_id=stream_id))
+        monkeypatch.setenv("HERMES_WEBUI_CHAT_BACKEND", "gateway")
+        entry = _ApprovalEntry(approval)
+        with _lock:
+            r._pending.pop(sid, None)
+            r._gateway_queues[sid] = [entry]
+        try:
+            ra.submit_gateway_pending_mirror(sid, approval)
+            with _lock:
+                approval_id = r._pending[sid][0]["approval_id"]
+                r._gateway_queues.pop(sid, None)
+
+            r._handle_approval_respond(
+                object(), {"session_id": sid, "choice": "once", "approval_id": approval_id}
+            )
+
+            assert captured["status"] == 409
+            assert captured["payload"] == {
+                "ok": False,
+                "choice": "once",
+                "relayed": False,
+                "code": "gateway_run_unavailable",
+                "error": r._GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
+            }
+            assert not entry.event.is_set()
+            with _lock:
+                pending_queue = r._pending.get(sid)
+                assert isinstance(pending_queue, list)
+                assert len(pending_queue) == 1
+                assert pending_queue[0]["approval_id"] == approval_id
         finally:
             with _lock:
                 r._pending.pop(sid, None)
