@@ -6733,21 +6733,21 @@ function transcript(){
 }
 
 let _composerAutoResizeRaf=0;
-let _composerLastResizeValueLength=0;
+let _composerLastResizeValue='';
 function autoResize(){
   if(_composerAutoResizeRaf && typeof cancelAnimationFrame==='function'){
     cancelAnimationFrame(_composerAutoResizeRaf);
     _composerAutoResizeRaf=0;
   }
   const el=$('msg');
-  const _nextValueLength=String(el.value||'').length;
-  const _isGrowing=_nextValueLength>_composerLastResizeValueLength;
+  const _nextValue=String(el.value||'');
+  const _isAppendOnly=_nextValue.length>_composerLastResizeValue.length&&_nextValue.startsWith(_composerLastResizeValue);
   const _fitsCurrentHeight=el.scrollHeight<=el.offsetHeight;
-  // A one-line append does not need a height round trip. Avoiding the
-  // `auto` → measured-height mutation keeps textarea caret geometry stable for
-  // assistive technology while deletes and genuine multi-line growth still resize.
-  if(_isGrowing&&_fitsCurrentHeight){
-    _composerLastResizeValueLength=_nextValueLength;
+  // Only a direct append that already fits can skip the height round trip.
+  // Replacements (including session and draft restoration) must remeasure so a
+  // previously tall composer can shrink back to its natural height.
+  if(_isAppendOnly&&_fitsCurrentHeight){
+    _composerLastResizeValue=_nextValue;
     updateSendBtn();
     return;
   }
@@ -6775,7 +6775,7 @@ function autoResize(){
   const _prevScrollTop=_msgs?_msgs.scrollTop:0;
   el.style.height='auto';
   el.style.height=Math.min(el.scrollHeight,200)+'px';
-  _composerLastResizeValueLength=_nextValueLength;
+  _composerLastResizeValue=_nextValue;
   if(_msgs&&_msgs.scrollTop!==_prevScrollTop) _msgs.scrollTop=_prevScrollTop;
   updateSendBtn();
   // Genuine NET growth (a new row that keeps the composer taller than before)

@@ -64,7 +64,7 @@ def test_single_line_growth_does_not_write_height_in_node_fixture():
     harness = textwrap.dedent(
         """
         let _composerAutoResizeRaf = 0;
-        let _composerLastResizeValueLength = 0;
+        let _composerLastResizeValue = '';
         let writes = 0;
         const msg = {
           value: 'a',
@@ -82,12 +82,51 @@ def test_single_line_growth_does_not_write_height_in_node_fixture():
         function _repinMessagesAfterComposerResize() { throw new Error('one-line append must not repin transcript'); }
         %(autoresize)s
         autoResize();
-        console.log(JSON.stringify({ writes, lastLength: _composerLastResizeValueLength, sendUpdates }));
+        console.log(JSON.stringify({ writes, lastValue: _composerLastResizeValue, sendUpdates }));
         """
     ) % {"autoresize": body}
     proc = subprocess.run([node, "-e", harness], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stderr
-    assert json.loads(proc.stdout) == {"writes": 0, "lastLength": 1, "sendUpdates": 1}
+    assert json.loads(proc.stdout) == {"writes": 0, "lastValue": "a", "sendUpdates": 1}
+
+
+def test_session_restore_replaces_tall_composer_with_natural_one_line_height():
+    node = shutil.which("node")
+    if not node:  # pragma: no cover
+        pytest.skip("node not available")
+    body = _autoresize_body()
+    harness = textwrap.dedent(
+        """
+        let _composerAutoResizeRaf = 0;
+        let _composerLastResizeValue = 'a\\nb';
+        let height = 150, writes = 0;
+        const msg = {
+          // Mirrors sessions.js draft restore: a prior multi-line value is
+          // replaced directly, then autoResize() runs without an input event.
+          value: 'a longer one-line restored draft',
+          get offsetHeight() { return height; },
+          get scrollHeight() { return height > 44 ? height : 44; },
+          style: {
+            set height(value) { writes += 1; height = value === 'auto' ? 44 : parseInt(value, 10); },
+            get height() { return height + 'px'; },
+          },
+        };
+        const messages = { scrollTop: 0 };
+        const $ = (id) => id === 'msg' ? msg : id === 'messages' ? messages : null;
+        function updateSendBtn() {}
+        function _repinMessagesAfterComposerResize() {}
+        %(autoresize)s
+        autoResize();
+        console.log(JSON.stringify({ writes, height, lastValue: _composerLastResizeValue }));
+        """
+    ) % {"autoresize": body}
+    proc = subprocess.run([node, "-e", harness], capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == {
+        "writes": 2,
+        "height": 44,
+        "lastValue": "a longer one-line restored draft",
+    }
 
 
 def test_programmatic_one_line_fill_refreshes_primary_button_without_height_writes():
@@ -102,7 +141,7 @@ def test_programmatic_one_line_fill_refreshes_primary_button_without_height_writ
     harness = textwrap.dedent(
         """
         let _composerAutoResizeRaf = 0;
-        let _composerLastResizeValueLength = 0;
+        let _composerLastResizeValue = '';
         let heightWrites = 0;
         const classes = new Set();
         const btn = {
@@ -169,7 +208,7 @@ def test_single_line_delete_still_runs_the_height_round_trip_in_node_fixture():
     harness = textwrap.dedent(
         """
         let _composerAutoResizeRaf = 0;
-        let _composerLastResizeValueLength = 5;
+        let _composerLastResizeValue = 'hello';
         let writes = 0, height = 100;
         const msg = {
           value: 'a',
@@ -187,15 +226,15 @@ def test_single_line_delete_still_runs_the_height_round_trip_in_node_fixture():
         function _repinMessagesAfterComposerResize() {}
         %(autoresize)s
         autoResize();
-        console.log(JSON.stringify({ writes, height, lastLength: _composerLastResizeValueLength, sendUpdates }));
+        console.log(JSON.stringify({ writes, height, lastValue: _composerLastResizeValue, sendUpdates }));
         """
     ) % {"autoresize": body}
     proc = subprocess.run([node, "-e", harness], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stderr
-    assert json.loads(proc.stdout) == {"writes": 2, "height": 44, "lastLength": 1, "sendUpdates": 1}
+    assert json.loads(proc.stdout) == {"writes": 2, "height": 44, "lastValue": "a", "sendUpdates": 1}
 
 
-def _run_resize_boundary_fixture(*, value: str, last_length: int, offset_height: int, scroll_height: int):
+def _run_resize_boundary_fixture(*, value: str, previous_value: str, offset_height: int, scroll_height: int):
     node = shutil.which("node")
     if not node:  # pragma: no cover
         pytest.skip("node not available")
@@ -203,7 +242,7 @@ def _run_resize_boundary_fixture(*, value: str, last_length: int, offset_height:
     harness = textwrap.dedent(
         """
         let _composerAutoResizeRaf = 0;
-        let _composerLastResizeValueLength = %(last_length)s;
+        let _composerLastResizeValue = %(previous_value)r;
         let writes = 0, height = %(offset_height)s, repins = 0;
         const msg = {
           value: %(value)r,
@@ -220,10 +259,10 @@ def _run_resize_boundary_fixture(*, value: str, last_length: int, offset_height:
         function _repinMessagesAfterComposerResize() { repins += 1; }
         %(autoresize)s
         autoResize();
-        console.log(JSON.stringify({ writes, height, lastLength: _composerLastResizeValueLength, repins }));
+        console.log(JSON.stringify({ writes, height, lastValue: _composerLastResizeValue, repins }));
         """
     ) % {
-        "last_length": last_length,
+        "previous_value": previous_value,
         "offset_height": offset_height,
         "scroll_height": scroll_height,
         "value": value,
@@ -237,21 +276,21 @@ def _run_resize_boundary_fixture(*, value: str, last_length: int, offset_height:
 def test_newline_growth_keeps_full_resize_and_repin_path():
     out = _run_resize_boundary_fixture(
         value="a\nb",
-        last_length=1,
+        previous_value="a",
         offset_height=44,
         scroll_height=68,
     )
-    assert out == {"writes": 2, "height": 68, "lastLength": 3, "repins": 1}
+    assert out == {"writes": 2, "height": 68, "lastValue": "a\nb", "repins": 1}
 
 
 def test_equal_length_replacement_keeps_full_resize_path():
     out = _run_resize_boundary_fixture(
         value="ab",
-        last_length=2,
+        previous_value="cd",
         offset_height=44,
         scroll_height=44,
     )
-    assert out == {"writes": 2, "height": 44, "lastLength": 2, "repins": 0}
+    assert out == {"writes": 2, "height": 44, "lastValue": "ab", "repins": 0}
 
 
 def _helper_body() -> str:
@@ -329,10 +368,10 @@ def test_resize_observer_installed_on_composer():
 
 def test_single_line_growth_skips_the_height_round_trip():
     body = _autoresize_body()
-    assert "let _composerLastResizeValueLength=0;" in MESSAGES_JS
-    assert "const _isGrowing=_nextValueLength>_composerLastResizeValueLength;" in body
+    assert "let _composerLastResizeValue='';" in MESSAGES_JS
+    assert "const _isAppendOnly=_nextValue.length>_composerLastResizeValue.length&&_nextValue.startsWith(_composerLastResizeValue);" in body
     assert "const _fitsCurrentHeight=el.scrollHeight<=el.offsetHeight;" in body
-    assert "if(_isGrowing&&_fitsCurrentHeight){" in body
+    assert "if(_isAppendOnly&&_fitsCurrentHeight){" in body
     assert "el.style.height='auto'" in body
 # ---------------------------------------------------------------------------
 
@@ -446,7 +485,7 @@ def _run_autoresize(scenario):
         const $ = (id) => (id === 'msg' ? msgEl : id === 'messages' ? msgsEl : null);
         let _messageUserUnpinned = %(unpinned)s, _scrollPinned = %(pinned)s;
         let _composerAutoResizeRaf = 0;
-        let _composerLastResizeValueLength = 0;
+        let _composerLastResizeValue = '';
         let _repinCalls = 0;
         function updateSendBtn(){}
         function _messageBottomDistance(){ return msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight; }
